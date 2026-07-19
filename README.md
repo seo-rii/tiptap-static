@@ -192,4 +192,25 @@ The test suite covers:
 - active content, URL schemes, event attributes, mapped attributes, and custom validators
 - emitted `/protocol` and `/light` dependency-graph boundaries
 
-Run `pnpm test`, `pnpm check`, and `pnpm pack:check` before publishing.
+## Tiptap comparison benchmarks
+
+Run the complete comparison locally with:
+
+```sh
+pnpm benchmark
+```
+
+The command builds the package, writes reports under the ignored `benchmark-results/` directory, and fails when a budget in `benchmark/budgets.json` is exceeded. `pnpm benchmark:render` and `pnpm benchmark:size` run the individual comparisons.
+
+The render benchmark gives the real Tiptap `Editor` and `createLightRenderer()` the same extension objects and the same nested HTML. It validates the mounted NodeView count first, warms both paths, alternates their execution order, and records 25 samples of six synchronous mounts. Component creation, DOM validation, and teardown happen identically around both paths; only synchronous mount is timed. The CI gate uses the paired median Tiptap/light ratio rather than an absolute millisecond limit, because shared-runner hardware changes absolute timings.
+
+The bundle benchmark uses the same pinned esbuild configuration for both browser ESM entry points:
+
+- `tiptap-static/light` exporting `createLightRenderer`
+- `@tiptap/core` exporting `Editor`
+
+It minifies the complete dependency graphs without externals, repeats each build to prove byte-for-byte determinism, and compares raw and gzip sizes. Framework code and application extensions are excluded from both bundles, so the result isolates the runtime choice and gives Tiptap the conservative baseline.
+
+GitHub Actions runs type checks, all tests, package validation, render performance, and bundle-size budgets on Node 22. Each comparison run is written to the Job Summary and retained as a `benchmark-results` artifact containing JSON and Markdown reports.
+
+Run `pnpm test`, `pnpm check`, `pnpm pack:check`, and `pnpm benchmark` before publishing.

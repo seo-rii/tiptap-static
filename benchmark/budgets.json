@@ -1,0 +1,15 @@
+{
+	"render": {
+		"outerCards": 4,
+		"warmupIterations": 12,
+		"samples": 25,
+		"batchSize": 6,
+		"minTiptapToStaticMedianRatio": 1.2
+	},
+	"bundleSize": {
+		"maxLightRawBytes": 16384,
+		"maxLightGzipBytes": 6144,
+		"maxLightToTiptapRawRatio": 0.1,
+		"maxLightToTiptapGzipRatio": 0.1
+	}
+}
