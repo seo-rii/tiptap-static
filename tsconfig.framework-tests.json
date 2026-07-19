@@ -1,0 +1,12 @@
+{
+	"extends": "./tsconfig.json",
+	"compilerOptions": {
+		"noEmit": true,
+		"rootDir": "."
+	},
+	"include": [
+		"src/**/*.ts",
+		"test/editor-parity.test.ts",
+		"test/framework-components.test.ts"
+	]
+}
