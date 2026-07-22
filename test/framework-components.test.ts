@@ -40,8 +40,10 @@ import {
 } from 'vue';
 import { describe, expect, it, vi, type Mock } from 'vitest';
 
+import { createHydrator } from '../src/hydrate.js';
 import { createLightRenderer } from '../src/light.js';
 import {
+	getStaticNodeViewHook,
 	setStaticNodeViewRuntime,
 	type StaticNodeViewProps,
 	type StaticNodeViewRenderer,
@@ -88,65 +90,95 @@ async function exerciseFrameworkRuntime(options: {
 	assertMounted?: (component: HTMLElement) => void;
 }) {
 	const extension = createContainerExtension(options.name, options.rawRenderer as never);
-	const renderer = createLightRenderer({
-		extensions: [extension],
-		nodeViewRuntimes: [options.runtime]
-	});
-	const target = document.createElement('div');
-	const session = renderer.mount(
-		target,
-		`<${options.name} title="first"><p>first content</p></${options.name}>`
-	);
-	await options.settle();
+	const nodeView = getStaticNodeViewHook(options.rawRenderer);
+	if (!nodeView) throw new Error('Framework fixture has no static NodeView hook.');
+	const renderers = [
+		createLightRenderer({
+			extensions: [extension],
+			nodeViewRuntimes: [options.runtime]
+		}),
+		createHydrator({
+			nodes: [
+				{
+					name: options.name,
+					rules: [
+						{
+							selector: options.name,
+							parse: (element) => {
+								const title = element.getAttribute('title') ?? '';
+								return { attrs: { title }, HTMLAttributes: { title } };
+							}
+						}
+					],
+					type: { isLeaf: false, spec: { content: 'block*' } },
+					nodeView
+				}
+			],
+			nodeViewRuntimes: [options.runtime]
+		})
+	];
 
-	const firstComponent = target.querySelector<HTMLElement>(options.componentSelector);
-	const firstButton = firstComponent?.querySelector<HTMLButtonElement>('[data-static-click]');
-	expect(options.rawRenderer).not.toHaveBeenCalled();
-	expect(firstComponent?.hasAttribute('data-node-view-wrapper')).toBe(true);
-	expect(firstComponent?.getAttribute('data-editable')).toBe('false');
-	expect(firstComponent?.getAttribute('data-static-selected')).toBe('false');
-	expect(firstComponent?.querySelector('strong')?.textContent).toBe('first');
-	expect(firstComponent?.querySelector('[data-static-content] p')?.textContent).toBe(
-		'first content'
-	);
-	expect(firstButton?.textContent).toBe('clicks:0');
-	expect(options.mounted).toHaveBeenCalledOnce();
-	expect(options.destroyed).not.toHaveBeenCalled();
-	options.assertMounted?.(firstComponent!);
+	for (const renderer of renderers) {
+		options.rawRenderer.mockClear();
+		options.mounted.mockClear();
+		options.destroyed.mockClear();
+		options.clicked.mockClear();
+		const target = document.createElement('div');
+		const session = renderer.mount(
+			target,
+			`<${options.name} title="first"><p>first content</p></${options.name}>`
+		);
+		await options.settle();
 
-	await options.click(firstButton!);
-	expect(firstButton?.textContent).toBe('clicks:1');
-	expect(options.clicked).toHaveBeenCalledOnce();
-	expect(firstComponent?.querySelector('[data-static-content] p')?.textContent).toBe(
-		'first content'
-	);
+		const firstComponent = target.querySelector<HTMLElement>(options.componentSelector);
+		const firstButton = firstComponent?.querySelector<HTMLButtonElement>('[data-static-click]');
+		expect(options.rawRenderer).not.toHaveBeenCalled();
+		expect(firstComponent?.hasAttribute('data-node-view-wrapper')).toBe(true);
+		expect(firstComponent?.getAttribute('data-editable')).toBe('false');
+		expect(firstComponent?.getAttribute('data-static-selected')).toBe('false');
+		expect(firstComponent?.querySelector('strong')?.textContent).toBe('first');
+		expect(firstComponent?.querySelector('[data-static-content] p')?.textContent).toBe(
+			'first content'
+		);
+		expect(firstButton?.textContent).toBe('clicks:0');
+		expect(options.mounted).toHaveBeenCalledOnce();
+		expect(options.destroyed).not.toHaveBeenCalled();
+		options.assertMounted?.(firstComponent!);
 
-	session.update(
-		`<${options.name} title="second"><p>second content</p></${options.name}>`
-	);
-	await options.settle();
-	expect(options.mounted).toHaveBeenCalledTimes(2);
-	expect(options.destroyed).toHaveBeenCalledOnce();
-	expect(target.querySelector(`${options.componentSelector} strong`)?.textContent).toBe('second');
-	expect(
-		target.querySelector(`${options.componentSelector} [data-static-content] p`)?.textContent
-	).toBe('second content');
+		await options.click(firstButton!);
+		expect(firstButton?.textContent).toBe('clicks:1');
+		expect(options.clicked).toHaveBeenCalledOnce();
+		expect(firstComponent?.querySelector('[data-static-content] p')?.textContent).toBe(
+			'first content'
+		);
 
-	session.destroy();
-	await options.settle();
-	expect(options.destroyed).toHaveBeenCalledTimes(2);
-	expect(target.querySelector(options.componentSelector)).toBeNull();
-	expect(target.querySelector(`${options.name}[title="second"] p`)?.textContent).toBe(
-		'second content'
-	);
-	expect(renderer.diagnostics).toEqual([]);
+		session.update(
+			`<${options.name} title="second"><p>second content</p></${options.name}>`
+		);
+		await options.settle();
+		expect(options.mounted).toHaveBeenCalledTimes(2);
+		expect(options.destroyed).toHaveBeenCalledOnce();
+		expect(target.querySelector(`${options.componentSelector} strong`)?.textContent).toBe('second');
+		expect(
+			target.querySelector(`${options.componentSelector} [data-static-content] p`)?.textContent
+		).toBe('second content');
 
-	session.destroy();
-	expect(options.destroyed).toHaveBeenCalledTimes(2);
+		session.destroy();
+		await options.settle();
+		expect(options.destroyed).toHaveBeenCalledTimes(2);
+		expect(target.querySelector(options.componentSelector)).toBeNull();
+		expect(target.querySelector(`${options.name}[title="second"] p`)?.textContent).toBe(
+			'second content'
+		);
+		expect(renderer.diagnostics).toEqual([]);
+
+		session.destroy();
+		expect(options.destroyed).toHaveBeenCalledTimes(2);
+	}
 }
 
 describe('real framework component runtimes', () => {
-	it('mounts the real svelte-tiptap wrapper and content components through /light', async () => {
+	it('mounts the real svelte-tiptap wrapper and content components through both runtimes', async () => {
 		const runtimeKey = Symbol.for('svelte-tiptap/static-node-view-runtime/v1');
 		const mounted = vi.fn();
 		const destroyed = vi.fn();
@@ -226,7 +258,7 @@ describe('real framework component runtimes', () => {
 		});
 	});
 
-	it('mounts the real @tiptap/react wrapper and content components through /light', async () => {
+	it('mounts the real @tiptap/react wrapper and content components through both runtimes', async () => {
 		const runtimeKey = Symbol.for('@tiptap/react/static-node-view-runtime/v1');
 		const mounted = vi.fn();
 		const destroyed = vi.fn();
@@ -340,7 +372,7 @@ describe('real framework component runtimes', () => {
 		});
 	});
 
-	it('mounts the real @tiptap/vue-3 wrapper and content components through /light', async () => {
+	it('mounts the real @tiptap/vue-3 wrapper and content components through both runtimes', async () => {
 		const runtimeKey = Symbol.for('@tiptap/vue-3/static-node-view-runtime/v1');
 		const contextKey = Symbol('vue-static-runtime-context');
 		const mounted = vi.fn();

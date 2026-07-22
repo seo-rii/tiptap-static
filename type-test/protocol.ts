@@ -1,9 +1,20 @@
 import {
 	STATIC_NODE_VIEW as ROOT_STATIC_NODE_VIEW,
+	createHydrator,
 	createLightRenderer,
+	createStaticNodeViewRuntimeHook,
+	defineStaticNode,
 	setStaticNodeViewRuntime as setRootRuntime,
 	type StaticNodeViewRuntime
 } from '../src/index.js';
+import type {
+	HydratorOptions as DirectHydratorOptions,
+	StaticHydrationMatch,
+	StaticHydrationNodeType,
+	StaticHydrationRule,
+	StaticHydrator as DirectStaticHydrator,
+	StaticNodePlan as DirectStaticNodePlan
+} from '../src/hydrate.js';
 import {
 	STATIC_NODE_VIEW as PROTOCOL_STATIC_NODE_VIEW,
 	setStaticNodeViewRuntime,
@@ -39,8 +50,35 @@ const runtime: StaticNodeViewRuntime<typeof descriptor> = {
 };
 
 createLightRenderer({ extensions: [], nodeViewRuntimes: [runtime] });
+const node = defineStaticNode({
+	name: 'type-test-card',
+	rules: [
+		{
+			selector: 'type-test-card',
+			parse: (element) => ({
+				attrs: { title: element.getAttribute('title') ?? '' },
+				HTMLAttributes: { title: element.getAttribute('title') ?? '' }
+			})
+		}
+	],
+	type: { isLeaf: false, spec: { content: 'block*' } },
+	nodeView: createStaticNodeViewRuntimeHook(runtimeKey, descriptor)
+});
+const directRule: StaticHydrationRule = node.rules[0];
+const directMatch: StaticHydrationMatch = { attrs: { title: 'typed' } };
+const directNodeType: StaticHydrationNodeType = node.type;
+const directPlan: DirectStaticNodePlan = node;
+const directOptions: DirectHydratorOptions = {
+	nodes: [directPlan],
+	nodeViewRuntimes: [runtime]
+};
+const directHydrator: DirectStaticHydrator = createHydrator(directOptions);
 
 void rootSymbol;
 void protocolSymbol;
 void rootSetter;
 void sameDescriptor;
+void directRule;
+void directMatch;
+void directNodeType;
+void directHydrator;

@@ -123,10 +123,16 @@ function measureBatch(createRender, batchSize, expectedNodeViews) {
 export async function runRenderBenchmark() {
 	const dom = installDOM();
 	try {
-		const [{ Editor, Node }, { createLightRenderer }, { setStaticNodeViewHook }] =
+		const [
+			{ Editor, Node },
+			{ createLightRenderer },
+			{ createHydrator },
+			{ createStaticNodeViewHook, setStaticNodeViewHook }
+		] =
 			await Promise.all([
 				import('@tiptap/core'),
 				import('../dist/light.js'),
+				import('../dist/hydrate.js'),
 				import('../dist/protocol.js')
 			]);
 		const [budgets, packageManifest] = await Promise.all([
@@ -174,6 +180,10 @@ export async function runRenderBenchmark() {
 				return ['p', 0];
 			}
 		});
+		const staticMount = (props) => {
+			staticHookCalls += 1;
+			return createNodeViewDOM(props);
+		};
 		const BenchmarkCard = Node.create({
 			name: 'benchmarkCard',
 			group: 'block',
@@ -192,14 +202,29 @@ export async function runRenderBenchmark() {
 					rawRendererCalls += 1;
 					return createNodeViewDOM(props);
 				};
-				return setStaticNodeViewHook(editorRenderer, (props) => {
-					staticHookCalls += 1;
-					return createNodeViewDOM(props);
-				});
+				return setStaticNodeViewHook(editorRenderer, staticMount);
 			}
 		});
 		const extensions = [TestDocument, TestText, TestParagraph, BenchmarkCard];
 		const lightRenderer = createLightRenderer({ extensions });
+		const hydrator = createHydrator({
+			nodes: [
+				{
+					name: 'benchmarkCard',
+					rules: [
+						{
+							selector: 'benchmark-card',
+							parse(element) {
+								const title = element.getAttribute('title') ?? '';
+								return { attrs: { title }, HTMLAttributes: { title } };
+							}
+						}
+					],
+					type: { isLeaf: false, spec: { content: 'block*' } },
+					nodeView: createStaticNodeViewHook(staticMount)
+				}
+			]
+		});
 
 		const renderTiptap = () => {
 			const target = document.createElement('div');
@@ -229,55 +254,131 @@ export async function runRenderBenchmark() {
 				}
 			};
 		};
+		const renderHydrate = () => {
+			const target = document.createElement('div');
+			const session = hydrator.mount(target, html);
+			return {
+				target,
+				destroy() {
+					session.destroy();
+					target.remove();
+				}
+			};
+		};
 
-		const rawCallsBeforeStaticProbe = rawRendererCalls;
-		measureBatch(renderStatic, 1, expectedNodeViews);
-		if (rawRendererCalls !== rawCallsBeforeStaticProbe || staticHookCalls === 0) {
-			throw new Error('The light benchmark did not stay on the static NodeView hook.');
+		const renderers = {
+			tiptap: renderTiptap,
+			light: renderStatic,
+			hydrate: renderHydrate
+		};
+		const projections = {};
+		for (const [name, createRender] of Object.entries(renderers)) {
+			const rawCallsBeforeProbe = rawRendererCalls;
+			const staticCallsBeforeProbe = staticHookCalls;
+			const rendered = createRender();
+			try {
+				const nodeViews = [
+					...rendered.target.querySelectorAll('[data-benchmark-node-view]')
+				];
+				if (nodeViews.length !== expectedNodeViews) {
+					throw new Error(
+						`Expected ${expectedNodeViews} NodeViews, received ${nodeViews.length}.`
+					);
+				}
+				projections[name] = nodeViews
+					.filter(
+						(nodeView) =>
+							!nodeView.parentElement?.closest('[data-benchmark-node-view]')
+					)
+					.map((nodeView) => nodeView.outerHTML);
+			} finally {
+				rendered.destroy();
+			}
+			if (name === 'tiptap') {
+				if (rawRendererCalls <= rawCallsBeforeProbe) {
+					throw new Error('The Tiptap benchmark did not invoke the editor NodeView renderer.');
+				}
+			} else if (
+				rawRendererCalls !== rawCallsBeforeProbe ||
+				staticHookCalls <= staticCallsBeforeProbe
+			) {
+				throw new Error(`The ${name} benchmark did not stay on its static NodeView hook.`);
+			}
 		}
-		const rawCallsBeforeTiptapProbe = rawRendererCalls;
-		measureBatch(renderTiptap, 1, expectedNodeViews);
-		if (rawRendererCalls <= rawCallsBeforeTiptapProbe) {
-			throw new Error('The Tiptap benchmark did not invoke the editor NodeView renderer.');
+		if (
+			JSON.stringify(projections.light) !== JSON.stringify(projections.tiptap) ||
+			JSON.stringify(projections.hydrate) !== JSON.stringify(projections.tiptap)
+		) {
+			throw new Error('The benchmark renderers produced different nested NodeView output.');
 		}
-
+		const orders = [
+			['tiptap', 'light', 'hydrate'],
+			['tiptap', 'hydrate', 'light'],
+			['light', 'tiptap', 'hydrate'],
+			['light', 'hydrate', 'tiptap'],
+			['hydrate', 'tiptap', 'light'],
+			['hydrate', 'light', 'tiptap']
+		];
 		for (let index = 0; index < warmupIterations; index += 1) {
-			if (index % 2 === 0) {
-				measureBatch(renderTiptap, 1, expectedNodeViews);
-				measureBatch(renderStatic, 1, expectedNodeViews);
-			} else {
-				measureBatch(renderStatic, 1, expectedNodeViews);
-				measureBatch(renderTiptap, 1, expectedNodeViews);
+			for (const name of orders[index % orders.length]) {
+				measureBatch(renderers[name], 1, expectedNodeViews);
 			}
 		}
 
-		const tiptapSamples = [];
-		const staticSamples = [];
+		const samples = { tiptap: [], light: [], hydrate: [] };
 		for (let sample = 0; sample < sampleCount; sample += 1) {
-			if (sample % 2 === 0) {
-				tiptapSamples.push(measureBatch(renderTiptap, batchSize, expectedNodeViews));
-				staticSamples.push(measureBatch(renderStatic, batchSize, expectedNodeViews));
-			} else {
-				staticSamples.push(measureBatch(renderStatic, batchSize, expectedNodeViews));
-				tiptapSamples.push(measureBatch(renderTiptap, batchSize, expectedNodeViews));
+			for (const name of orders[sample % orders.length]) {
+				samples[name].push(measureBatch(renderers[name], batchSize, expectedNodeViews));
 			}
 		}
 
-		const tiptap = summarize(tiptapSamples);
-		const light = summarize(staticSamples);
+		const tiptap = summarize(samples.tiptap);
+		const light = summarize(samples.light);
+		const hydrate = summarize(samples.hydrate);
 		const tiptapToStaticMedianRatio = tiptap.medianMs / light.medianMs;
-		const pairedRatios = tiptapSamples.map(
-			(tiptapSample, index) => tiptapSample / staticSamples[index]
+		const pairedRatios = samples.tiptap.map(
+			(tiptapSample, index) => tiptapSample / samples.light[index]
+		);
+		const pairedTiptapToHydrateRatios = samples.tiptap.map(
+			(tiptapSample, index) => tiptapSample / samples.hydrate[index]
+		);
+		const pairedLightToHydrateRatios = samples.light.map(
+			(lightSample, index) => lightSample / samples.hydrate[index]
 		);
 		const pairedMedianRatio = percentile(pairedRatios, 0.5);
-		const minimumRatio = budgets.render.minTiptapToStaticMedianRatio;
-		const check = {
-			id: 'render.paired-median-ratio.min',
-			actual: round(pairedMedianRatio, 4),
-			limit: minimumRatio,
-			operator: '>=',
-			passed: pairedMedianRatio >= minimumRatio
-		};
+		const pairedTiptapToHydrateMedianRatio = percentile(
+			pairedTiptapToHydrateRatios,
+			0.5
+		);
+		const pairedLightToHydrateMedianRatio = percentile(
+			pairedLightToHydrateRatios,
+			0.5
+		);
+		const checks = [
+			{
+				id: 'render.paired-median-ratio.min',
+				actual: round(pairedMedianRatio, 4),
+				limit: budgets.render.minTiptapToStaticMedianRatio,
+				operator: '>=',
+				passed: pairedMedianRatio >= budgets.render.minTiptapToStaticMedianRatio
+			},
+			{
+				id: 'render.tiptap-to-hydrate.paired-median-ratio.min',
+				actual: round(pairedTiptapToHydrateMedianRatio, 4),
+				limit: budgets.render.minTiptapToHydrateMedianRatio,
+				operator: '>=',
+				passed:
+					pairedTiptapToHydrateMedianRatio >= budgets.render.minTiptapToHydrateMedianRatio
+			},
+			{
+				id: 'render.light-to-hydrate.paired-median-ratio.min',
+				actual: round(pairedLightToHydrateMedianRatio, 4),
+				limit: budgets.render.minLightToHydrateMedianRatio,
+				operator: '>=',
+				passed:
+					pairedLightToHydrateMedianRatio >= budgets.render.minLightToHydrateMedianRatio
+			}
+		];
 		const result = {
 			schemaVersion: 1,
 			benchmark: 'render-performance',
@@ -297,10 +398,15 @@ export async function runRenderBenchmark() {
 			methodology: {
 				measuredPhase: 'synchronous mount; destroy runs after each timed operation',
 				alternatingOrder: true,
+				balancedSixWayOrder: true,
 				lightRendererPreparedOnce: true,
+				hydratorPreparedOnce: true,
 				tiptapEditorCreatedPerRender: true,
-				sameExtensionObject: true,
-				sameHTML: true
+				sameExtensionObjectForTiptapAndLight: true,
+				equivalentPreparedPlanForHydrate: true,
+				sameNodeViewMountImplementation: true,
+				sameHTML: true,
+				nestedNodeViewOutputCompared: true
 			},
 			workload: {
 				outerCards,
@@ -312,17 +418,40 @@ export async function runRenderBenchmark() {
 			},
 			results: {
 				tiptapEditor: tiptap,
-				tiptapStaticLight: light
+				tiptapStaticLight: light,
+				tiptapStaticHydrate: hydrate
 			},
 			comparison: {
 				tiptapToStaticMedianRatio: round(tiptapToStaticMedianRatio, 4),
 				pairedMedianRatio: round(pairedMedianRatio, 4),
 				pairedP25Ratio: round(percentile(pairedRatios, 0.25), 4),
 				pairedP75Ratio: round(percentile(pairedRatios, 0.75), 4),
-				staticSavingsPercent: round((1 - 1 / pairedMedianRatio) * 100, 2)
+				staticSavingsPercent: round((1 - 1 / pairedMedianRatio) * 100, 2),
+				pairedTiptapToHydrateMedianRatio: round(pairedTiptapToHydrateMedianRatio, 4),
+				pairedTiptapToHydrateP25Ratio: round(
+					percentile(pairedTiptapToHydrateRatios, 0.25),
+					4
+				),
+				pairedTiptapToHydrateP75Ratio: round(
+					percentile(pairedTiptapToHydrateRatios, 0.75),
+					4
+				),
+				pairedLightToHydrateMedianRatio: round(pairedLightToHydrateMedianRatio, 4),
+				pairedLightToHydrateP25Ratio: round(
+					percentile(pairedLightToHydrateRatios, 0.25),
+					4
+				),
+				pairedLightToHydrateP75Ratio: round(
+					percentile(pairedLightToHydrateRatios, 0.75),
+					4
+				),
+				hydrateSavingsPercent: round(
+					(1 - 1 / pairedTiptapToHydrateMedianRatio) * 100,
+					2
+				)
 			},
-			checks: [check],
-			passed: check.passed
+			checks,
+			passed: checks.every((check) => check.passed)
 		};
 
 		return result;
@@ -336,14 +465,17 @@ export function renderPerformanceMarkdown(result) {
 	return [
 		'## Render performance',
 		'',
-		'Identical nested HTML and the same extension object are rendered in jsdom. Timings cover synchronous mount only; teardown happens after every sample.',
+		'Identical nested HTML and the same NodeView mount implementation are rendered in jsdom. Tiptap and /light share extension objects; /hydrate uses an equivalent prepared plan. Timings cover synchronous mount only; teardown happens after every sample.',
 		'',
 		'| Renderer | Median | p95 | Operations/s |',
 		'| --- | ---: | ---: | ---: |',
 		`| Tiptap Editor | ${result.results.tiptapEditor.medianMs} ms | ${result.results.tiptapEditor.p95Ms} ms | ${result.results.tiptapEditor.operationsPerSecond} |`,
 		`| tiptap-static/light | ${result.results.tiptapStaticLight.medianMs} ms | ${result.results.tiptapStaticLight.p95Ms} ms | ${result.results.tiptapStaticLight.operationsPerSecond} |`,
+		`| tiptap-static/hydrate | ${result.results.tiptapStaticHydrate.medianMs} ms | ${result.results.tiptapStaticHydrate.p95Ms} ms | ${result.results.tiptapStaticHydrate.operationsPerSecond} |`,
 		'',
-		`Paired Tiptap/static median ratio: **${result.comparison.pairedMedianRatio}×** (budget ≥ ${result.checks[0].limit}×) — **${status}**`,
+		`Paired Tiptap/light median ratio: **${result.comparison.pairedMedianRatio}×** (budget ≥ ${result.checks[0].limit}×)`,
+		`Paired Tiptap/hydrate median ratio: **${result.comparison.pairedTiptapToHydrateMedianRatio}×** (budget ≥ ${result.checks[1].limit}×)`,
+		`Paired light/hydrate median ratio: **${result.comparison.pairedLightToHydrateMedianRatio}×** (budget ≥ ${result.checks[2].limit}×) — **${status}**`,
 		''
 	].join('\n');
 }

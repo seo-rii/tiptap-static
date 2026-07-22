@@ -1,5 +1,6 @@
 import {
 	Editor as CoreEditor,
+	Mark,
 	Node,
 	type NodeViewRendererProps
 } from '@tiptap/core';
@@ -51,9 +52,15 @@ import {
 } from 'vue';
 import { describe, expect, it, vi } from 'vitest';
 
+import { createHydrator, defineStaticNode } from '../src/hydrate.js';
 import { createLightRenderer } from '../src/light.js';
 import {
+	createStaticNodeViewRuntimeHook,
+	createStaticNodeViewHook,
+	setStaticNodeViewHook,
 	setStaticNodeViewRuntime,
+	type StaticNodeViewProps,
+	type StaticNodeViewHook,
 	type StaticNodeViewRenderer,
 	type StaticNodeViewRuntime
 } from '../src/protocol.js';
@@ -165,6 +172,27 @@ function createContainerExtension(options: {
 		addNodeView() {
 			return options.createRenderer() as never;
 		}
+	});
+}
+
+function createContainerPlan(options: {
+	name: string;
+	tag: string;
+	nodeView: StaticNodeViewHook;
+}) {
+	return defineStaticNode({
+		name: options.name,
+		rules: [
+			{
+				selector: options.tag,
+				parse(element) {
+					const title = element.getAttribute('title') ?? '';
+					return { attrs: { title }, HTMLAttributes: { title } };
+				}
+			}
+		],
+		type: { isLeaf: false, spec: { content: 'block*' } },
+		nodeView: options.nodeView
 	});
 }
 
@@ -502,7 +530,8 @@ describe('actual Tiptap Editor parity', () => {
 		'renders $name like the real svelte-tiptap Editor',
 		async ({ html, expected }) => {
 			const tracker: RendererTracker = { rawCalls: 0, descriptorComponents: [] };
-			const capture: RuntimeCapture = { extensions: [] };
+			const lightCapture: RuntimeCapture = { extensions: [] };
+			const hydrateCapture: RuntimeCapture = { extensions: [] };
 			const rendererOptions = {
 				as: 'article',
 				attrs: { 'data-svelte-renderer-option': 'preserved' }
@@ -517,6 +546,14 @@ describe('actual Tiptap Editor parity', () => {
 						rendererOptions
 					)
 			});
+			const hydrationNode = createContainerPlan({
+				name: 'svelteParityCard',
+				tag: 'svelte-parity-card',
+				nodeView: createStaticNodeViewRuntimeHook(SVELTE_RUNTIME_KEY, {
+					component: StaticNodeView as SvelteComponent,
+					options: rendererOptions
+				} satisfies SvelteDescriptor)
+			});
 			const extensions = [TestDocument, TestText, TestParagraph, extension];
 			const editor = new SvelteEditor({
 				element: document.createElement('div'),
@@ -527,12 +564,14 @@ describe('actual Tiptap Editor parity', () => {
 			});
 			const editorHost = document.createElement('div');
 			const lightHost = document.createElement('div');
-			document.body.append(editorHost, lightHost);
+			const hydrateHost = document.createElement('div');
+			document.body.append(editorHost, lightHost, hydrateHost);
 			const editorContent = mountSvelte(SvelteEditorContent, {
 				target: editorHost,
 				props: { editor }
 			});
 			let session: ReturnType<ReturnType<typeof createLightRenderer>['mount']> | undefined;
+			let hydrateSession: ReturnType<ReturnType<typeof createHydrator>['mount']> | undefined;
 
 			try {
 				await settleSvelte();
@@ -542,25 +581,41 @@ describe('actual Tiptap Editor parity', () => {
 
 				const lightRenderer = createLightRenderer({
 					extensions,
-					nodeViewRuntimes: [createSvelteRuntime(capture)]
+					nodeViewRuntimes: [createSvelteRuntime(lightCapture)]
 				});
 				session = lightRenderer.mount(lightHost, html);
+				const hydrator = createHydrator({
+					nodes: [hydrationNode],
+					nodeViewRuntimes: [createSvelteRuntime(hydrateCapture)]
+				});
+				hydrateSession = hydrator.mount(hydrateHost, html);
 				await settleSvelte();
 				const light = snapshotNodeViews(lightHost);
+				const hydrated = snapshotNodeViews(hydrateHost);
 
 				expect(tracker.rawCalls).toBe(rawCallsAfterEditor);
 				expect(light).toEqual(actual);
+				expect(hydrated).toEqual(actual);
 				expect(toStructure(actual)).toEqual(expected);
 				expectReadOnlyComponentContract(actual);
 				expect(normalizedHTML(editor.getHTML())).toBe(normalizedHTML(session.html));
-				expect(capture.extensions).not.toHaveLength(0);
-				expect(capture.extensions.every((candidate) => candidate === extension)).toBe(true);
+				expect(normalizedHTML(editor.getHTML())).toBe(normalizedHTML(hydrateSession.html));
+				expect(lightCapture.extensions).not.toHaveLength(0);
+				expect(lightCapture.extensions.every((candidate) => candidate === extension)).toBe(true);
+				expect(hydrateCapture.extensions).not.toHaveLength(0);
+				expect(
+					hydrateCapture.extensions.every(
+						(candidate) =>
+							candidate !== extension &&
+							(candidate as { name?: string }).name === hydrationNode.name
+					)
+				).toBe(true);
 				expect(
 					tracker.descriptorComponents.every(
 						(component) => component === (StaticNodeView as SvelteComponent)
 					)
 				).toBe(true);
-				for (const root of [editorHost, lightHost]) {
+				for (const root of [editorHost, lightHost, hydrateHost]) {
 					const rendererDOM = root.querySelector<HTMLElement>(
 						'article.node-svelteParityCard'
 					);
@@ -569,12 +624,15 @@ describe('actual Tiptap Editor parity', () => {
 					);
 				}
 				expect(lightRenderer.diagnostics).toEqual([]);
+				expect(hydrator.diagnostics).toEqual([]);
 			} finally {
 				session?.destroy();
+				hydrateSession?.destroy();
 				await unmountSvelte(editorContent);
 				editor.destroy();
 				editorHost.remove();
 				lightHost.remove();
+				hydrateHost.remove();
 				await settleSvelte();
 			}
 		}
@@ -582,7 +640,8 @@ describe('actual Tiptap Editor parity', () => {
 
 	it('matches the upstream svelte-tiptap atom example and keeps static updates read-only', async () => {
 		const tracker: RendererTracker = { rawCalls: 0, descriptorComponents: [] };
-		const capture: RuntimeCapture = { extensions: [] };
+		const lightCapture: RuntimeCapture = { extensions: [] };
+		const hydrateCapture: RuntimeCapture = { extensions: [] };
 		const extension = Node.create({
 			name: 'svelteParityLeaf',
 			group: 'block',
@@ -606,6 +665,26 @@ describe('actual Tiptap Editor parity', () => {
 				) as never;
 			}
 		});
+		const hydrationNode = defineStaticNode({
+			name: 'svelteParityLeaf',
+			rules: [
+				{
+					selector: 'svelte-parity-leaf',
+					parse(element) {
+						const title = element.getAttribute('title') ?? '';
+						const count = Number(element.getAttribute('count') ?? 0);
+						return {
+							attrs: { title, count },
+							HTMLAttributes: { title, count }
+						};
+					}
+				}
+			],
+			type: { isLeaf: true, isAtom: true },
+			nodeView: createStaticNodeViewRuntimeHook(SVELTE_RUNTIME_KEY, {
+				component: StaticLeafNodeView as SvelteComponent
+			} satisfies SvelteDescriptor)
+		});
 		const html =
 			'<p>selection anchor</p><svelte-parity-leaf title="counter" count="3"></svelte-parity-leaf>';
 		const extensions = [TestDocument, TestText, TestParagraph, extension];
@@ -618,12 +697,14 @@ describe('actual Tiptap Editor parity', () => {
 		});
 		const editorHost = document.createElement('div');
 		const lightHost = document.createElement('div');
-		document.body.append(editorHost, lightHost);
+		const hydrateHost = document.createElement('div');
+		document.body.append(editorHost, lightHost, hydrateHost);
 		const editorContent = mountSvelte(SvelteEditorContent, {
 			target: editorHost,
 			props: { editor }
 		});
 		let session: ReturnType<ReturnType<typeof createLightRenderer>['mount']> | undefined;
+		let hydrateSession: ReturnType<ReturnType<typeof createHydrator>['mount']> | undefined;
 
 		try {
 			await settleSvelte();
@@ -631,14 +712,21 @@ describe('actual Tiptap Editor parity', () => {
 			const rawCallsAfterEditor = tracker.rawCalls;
 			const lightRenderer = createLightRenderer({
 				extensions,
-				nodeViewRuntimes: [createSvelteRuntime(capture)]
+				nodeViewRuntimes: [createSvelteRuntime(lightCapture)]
 			});
 			session = lightRenderer.mount(lightHost, html);
+			const hydrator = createHydrator({
+				nodes: [hydrationNode],
+				nodeViewRuntimes: [createSvelteRuntime(hydrateCapture)]
+			});
+			hydrateSession = hydrator.mount(hydrateHost, html);
 			await settleSvelte();
 			const light = snapshotNodeViews(lightHost);
+			const hydrated = snapshotNodeViews(hydrateHost);
 
 			expect(tracker.rawCalls).toBe(rawCallsAfterEditor);
 			expect(light).toEqual(actual);
+			expect(hydrated).toEqual(actual);
 			expect(actual).toEqual([
 				expect.objectContaining({
 					framework: 'svelte',
@@ -650,6 +738,7 @@ describe('actual Tiptap Editor parity', () => {
 			]);
 			expectReadOnlyComponentContract(actual);
 			expect(normalizedHTML(editor.getHTML())).toBe(normalizedHTML(session.html));
+			expect(normalizedHTML(editor.getHTML())).toBe(normalizedHTML(hydrateSession.html));
 
 			editorHost.querySelector<HTMLButtonElement>('[data-static-count]')?.click();
 			await settleSvelte();
@@ -659,25 +748,34 @@ describe('actual Tiptap Editor parity', () => {
 			expect(editor.getHTML()).toContain('count="4"');
 
 			lightHost.querySelector<HTMLButtonElement>('[data-static-count]')?.click();
+			hydrateHost.querySelector<HTMLButtonElement>('[data-static-count]')?.click();
 			await settleSvelte();
 			expect(lightHost.querySelector('[data-static-count]')?.textContent?.trim()).toBe(
 				'count:3'
 			);
 			expect(session.html).toBe(html);
+			expect(hydrateHost.querySelector('[data-static-count]')?.textContent?.trim()).toBe(
+				'count:3'
+			);
+			expect(hydrateSession.html).toBe(html);
 			expect(lightRenderer.diagnostics).toEqual([]);
+			expect(hydrator.diagnostics).toEqual([]);
 		} finally {
 			session?.destroy();
+			hydrateSession?.destroy();
 			await unmountSvelte(editorContent);
 			editor.destroy();
 			editorHost.remove();
 			lightHost.remove();
+			hydrateHost.remove();
 			await settleSvelte();
 		}
 	});
 
-	it('matches nested @tiptap/react EditorContent output without invoking the raw renderer in light mode', async () => {
+	it('matches nested @tiptap/react EditorContent output in light and hydrate modes', async () => {
 		const tracker: RendererTracker = { rawCalls: 0, descriptorComponents: [] };
-		const capture: RuntimeCapture = { extensions: [] };
+		const lightCapture: RuntimeCapture = { extensions: [] };
+		const hydrateCapture: RuntimeCapture = { extensions: [] };
 		const ReactParityLabel = ({ title }: { title: string }) => {
 			const context = useContext(ReactNodeViewContext);
 			return createElement(
@@ -717,6 +815,14 @@ describe('actual Tiptap Editor parity', () => {
 			createRenderer: () =>
 				createReactRenderer(ReactParityNodeView, tracker, rendererOptions)
 		});
+		const hydrationNode = createContainerPlan({
+			name: 'reactParityCard',
+			tag: 'react-parity-card',
+			nodeView: createStaticNodeViewRuntimeHook(REACT_RUNTIME_KEY, {
+				component: ReactParityNodeView,
+				options: rendererOptions
+			} satisfies ReactDescriptor)
+		});
 		const html =
 			'<react-parity-card title="outer"><p>before</p><react-parity-card title="inner"><p>inside</p></react-parity-card><p>after</p></react-parity-card>';
 		const extensions = [TestDocument, TestText, TestParagraph, extension];
@@ -729,9 +835,11 @@ describe('actual Tiptap Editor parity', () => {
 		});
 		const editorHost = document.createElement('div');
 		const lightHost = document.createElement('div');
-		document.body.append(editorHost, lightHost);
+		const hydrateHost = document.createElement('div');
+		document.body.append(editorHost, lightHost, hydrateHost);
 		let editorRoot: Root | undefined;
 		let session: ReturnType<ReturnType<typeof createLightRenderer>['mount']> | undefined;
+		let hydrateSession: ReturnType<ReturnType<typeof createHydrator>['mount']> | undefined;
 		const actEnvironment = globalThis as typeof globalThis & {
 			IS_REACT_ACT_ENVIRONMENT?: boolean;
 		};
@@ -753,15 +861,22 @@ describe('actual Tiptap Editor parity', () => {
 
 			const lightRenderer = createLightRenderer({
 				extensions,
-				nodeViewRuntimes: [createReactRuntime(capture)]
+				nodeViewRuntimes: [createReactRuntime(lightCapture)]
+			});
+			const hydrator = createHydrator({
+				nodes: [hydrationNode],
+				nodeViewRuntimes: [createReactRuntime(hydrateCapture)]
 			});
 			await actReact(async () => {
 				session = lightRenderer.mount(lightHost, html);
+				hydrateSession = hydrator.mount(hydrateHost, html);
 			});
 			const light = snapshotNodeViews(lightHost);
+			const hydrated = snapshotNodeViews(hydrateHost);
 
 			expect(tracker.rawCalls).toBe(rawCallsAfterEditor);
 			expect(light).toEqual(actual);
+			expect(hydrated).toEqual(actual);
 			expect(toStructure(actual)).toEqual([
 				{
 					title: 'outer',
@@ -773,9 +888,17 @@ describe('actual Tiptap Editor parity', () => {
 				}
 			]);
 			expectReadOnlyComponentContract(actual);
-			expect(capture.extensions.every((candidate) => candidate === extension)).toBe(true);
+			expect(lightCapture.extensions.every((candidate) => candidate === extension)).toBe(true);
+			expect(
+				hydrateCapture.extensions.every(
+					(candidate) =>
+						candidate !== extension &&
+						(candidate as { name?: string }).name === hydrationNode.name
+				)
+			).toBe(true);
 			expect(normalizedHTML(editor.getHTML())).toBe(normalizedHTML(session!.html));
-			for (const root of [editorHost, lightHost]) {
+			expect(normalizedHTML(editor.getHTML())).toBe(normalizedHTML(hydrateSession!.html));
+			for (const root of [editorHost, lightHost, hydrateHost]) {
 				const rendererDOM = root.querySelector<HTMLElement>(
 					'article.node-reactParityCard'
 				);
@@ -785,21 +908,25 @@ describe('actual Tiptap Editor parity', () => {
 				);
 			}
 			expect(lightRenderer.diagnostics).toEqual([]);
+			expect(hydrator.diagnostics).toEqual([]);
 		} finally {
 			await actReact(async () => {
 				session?.destroy();
+				hydrateSession?.destroy();
 				editorRoot?.unmount();
 			});
 			editor.destroy();
 			editorHost.remove();
 			lightHost.remove();
+			hydrateHost.remove();
 			actEnvironment.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
 		}
 	});
 
-	it('matches nested @tiptap/vue-3 EditorContent output and forwards application context', async () => {
+	it('matches nested @tiptap/vue-3 output in light and hydrate modes with application context', async () => {
 		const tracker: RendererTracker = { rawCalls: 0, descriptorComponents: [] };
-		const capture: RuntimeCapture = { extensions: [] };
+		const lightCapture: RuntimeCapture = { extensions: [] };
+		const hydrateCapture: RuntimeCapture = { extensions: [] };
 		const contextKey = Symbol('vue-parity-context');
 		const sharedContext = 'shared-vue-context';
 		const VueParityLabel = defineComponent({
@@ -853,6 +980,14 @@ describe('actual Tiptap Editor parity', () => {
 			createRenderer: () =>
 				createVueRenderer(VueParityNodeView as VueComponent, tracker, sharedContext)
 		});
+		const hydrationNode = createContainerPlan({
+			name: 'vueParityCard',
+			tag: 'vue-parity-card',
+			nodeView: createStaticNodeViewRuntimeHook(VUE_RUNTIME_KEY, {
+				component: VueParityNodeView as VueComponent,
+				context: sharedContext
+			} satisfies VueDescriptor)
+		});
 		const html =
 			'<vue-parity-card title="outer"><p>before</p><vue-parity-card title="inner"><p>inside</p></vue-parity-card><p>after</p></vue-parity-card>';
 		const extensions = [TestDocument, TestText, TestParagraph, extension];
@@ -865,9 +1000,11 @@ describe('actual Tiptap Editor parity', () => {
 		});
 		const editorHost = document.createElement('div');
 		const lightHost = document.createElement('div');
-		document.body.append(editorHost, lightHost);
+		const hydrateHost = document.createElement('div');
+		document.body.append(editorHost, lightHost, hydrateHost);
 		let editorApp: App<Element> | undefined;
 		let session: ReturnType<ReturnType<typeof createLightRenderer>['mount']> | undefined;
+		let hydrateSession: ReturnType<ReturnType<typeof createHydrator>['mount']> | undefined;
 
 		try {
 			editorApp = createApp(
@@ -888,14 +1025,21 @@ describe('actual Tiptap Editor parity', () => {
 
 			const lightRenderer = createLightRenderer({
 				extensions,
-				nodeViewRuntimes: [createVueRuntime(capture, contextKey)]
+				nodeViewRuntimes: [createVueRuntime(lightCapture, contextKey)]
 			});
 			session = lightRenderer.mount(lightHost, html);
+			const hydrator = createHydrator({
+				nodes: [hydrationNode],
+				nodeViewRuntimes: [createVueRuntime(hydrateCapture, contextKey)]
+			});
+			hydrateSession = hydrator.mount(hydrateHost, html);
 			await nextTick();
 			const light = snapshotNodeViews(lightHost);
+			const hydrated = snapshotNodeViews(hydrateHost);
 
 			expect(tracker.rawCalls).toBe(rawCallsAfterEditor);
 			expect(light).toEqual(actual);
+			expect(hydrated).toEqual(actual);
 			expect(toStructure(actual)).toEqual([
 				{
 					title: 'outer',
@@ -907,22 +1051,188 @@ describe('actual Tiptap Editor parity', () => {
 				}
 			]);
 			expectReadOnlyComponentContract(actual);
+			for (const root of [editorHost, lightHost, hydrateHost]) {
+				const contextElements = [...root.querySelectorAll('[data-application-context]')];
+				expect(contextElements).toHaveLength(2);
+				expect(
+					contextElements.every(
+						(element) =>
+							element.getAttribute('data-application-context') === sharedContext
+					)
+				).toBe(true);
+			}
+			expect(lightCapture.extensions.every((candidate) => candidate === extension)).toBe(true);
 			expect(
-				[...editorHost.querySelectorAll('[data-application-context]')].every(
-					(element) =>
-						element.getAttribute('data-application-context') === sharedContext
+				hydrateCapture.extensions.every(
+					(candidate) =>
+						candidate !== extension &&
+						(candidate as { name?: string }).name === hydrationNode.name
 				)
 			).toBe(true);
-			expect(capture.extensions.every((candidate) => candidate === extension)).toBe(true);
 			expect(normalizedHTML(editor.getHTML())).toBe(normalizedHTML(session.html));
+			expect(normalizedHTML(editor.getHTML())).toBe(normalizedHTML(hydrateSession.html));
 			expect(lightRenderer.diagnostics).toEqual([]);
+			expect(hydrator.diagnostics).toEqual([]);
 		} finally {
 			session?.destroy();
+			hydrateSession?.destroy();
 			editor.destroy();
 			editorApp?.unmount();
 			editorHost.remove();
 			lightHost.remove();
+			hydrateHost.remove();
 			await nextTick();
+		}
+	});
+
+	it('matches mapped attributes and an explicit content hole across all three runtimes', () => {
+		interface CapturedCodeNode {
+			attrs: Record<string, unknown>;
+			HTMLAttributes: Record<string, unknown>;
+			textContent: string;
+		}
+		const actualCaptures: CapturedCodeNode[] = [];
+		const lightCaptures: CapturedCodeNode[] = [];
+		const hydrateCaptures: CapturedCodeNode[] = [];
+		const createCodeNodeView = (
+			props: StaticNodeViewProps,
+			captures: CapturedCodeNode[]
+		) => {
+			captures.push({
+				attrs: { ...props.node.attrs },
+				HTMLAttributes: { ...props.HTMLAttributes },
+				textContent: props.node.textContent
+			});
+			const dom = document.createElement('section');
+			dom.dataset.parityCodeView = '';
+			const contentDOM = document.createElement('div');
+			contentDOM.dataset.parityCodeContent = '';
+			dom.append(contentDOM);
+			return { dom, contentDOM };
+		};
+		const rawRenderer = ((props: NodeViewRendererProps) =>
+			createCodeNodeView(
+				props as unknown as StaticNodeViewProps,
+				actualCaptures
+			)) as unknown as StaticNodeViewRenderer;
+		setStaticNodeViewHook(rawRenderer, (props) =>
+			createCodeNodeView(props, lightCaptures)
+		);
+		const CodeNode = Node.create({
+			name: 'preparedParityCode',
+			group: 'block',
+			content: 'inline*',
+			addAttributes() {
+				return {
+					count: {
+						default: 0,
+						parseHTML: (element) => Number(element.getAttribute('data-count') ?? 0),
+						renderHTML: (attributes) => ({ 'data-count': String(attributes.count) })
+					},
+					enabled: {
+						default: false,
+						parseHTML: (element) => element.hasAttribute('data-enabled'),
+						renderHTML: (attributes) =>
+							attributes.enabled ? { 'data-enabled': 'true' } : {}
+					},
+					tone: {
+						default: 'neutral',
+						parseHTML: (element) => element.getAttribute('data-tone') ?? 'neutral',
+						renderHTML: (attributes) => ({ 'data-tone': attributes.tone })
+					}
+				};
+			},
+			parseHTML() {
+				return [
+					{
+						tag: 'pre[data-parity-code]',
+						contentElement: 'code'
+					}
+				];
+			},
+			renderHTML({ HTMLAttributes }) {
+				return ['pre', { ...HTMLAttributes, 'data-parity-code': '' }, ['code', 0]];
+			},
+			addNodeView() {
+				return rawRenderer as never;
+			}
+		});
+		const Bold = Mark.create({
+			name: 'bold',
+			parseHTML: () => [{ tag: 'strong' }],
+			renderHTML: () => ['strong', 0]
+		});
+		const html =
+			'<pre data-parity-code data-count="3" data-enabled data-tone="blue"><span>outside</span><code>inside <strong>bold</strong></code></pre>';
+		const extensions = [TestDocument, TestText, Bold, CodeNode];
+		const editorHost = document.createElement('div');
+		const lightHost = document.createElement('div');
+		const hydrateHost = document.createElement('div');
+		const editor = new CoreEditor({
+			element: editorHost,
+			extensions,
+			content: html,
+			editable: false,
+			injectCSS: false
+		});
+		const lightRenderer = createLightRenderer({ extensions });
+		const lightSession = lightRenderer.mount(lightHost, html);
+		const hydrationNode = defineStaticNode({
+			name: 'preparedParityCode',
+			rules: [
+				{
+					selector: 'pre[data-parity-code]',
+					contentElement: 'code',
+					parse(element) {
+						const count = Number(element.getAttribute('data-count') ?? 0);
+						const enabled = element.hasAttribute('data-enabled');
+						const tone = element.getAttribute('data-tone') ?? 'neutral';
+						return {
+							attrs: { count, enabled, tone },
+							HTMLAttributes: {
+								'data-count': String(count),
+								...(enabled ? { 'data-enabled': 'true' } : {}),
+								'data-tone': tone
+							}
+						};
+					}
+				}
+			],
+			type: { isLeaf: false, spec: { content: 'inline*' } },
+			nodeView: createStaticNodeViewHook((props) =>
+				createCodeNodeView(props, hydrateCaptures)
+			)
+		});
+		const hydrator = createHydrator({ nodes: [hydrationNode] });
+		const hydrateSession = hydrator.mount(hydrateHost, html);
+
+		try {
+			expect(actualCaptures).toEqual([
+				{
+					attrs: { count: 3, enabled: true, tone: 'blue' },
+					HTMLAttributes: {
+						'data-count': '3',
+						'data-enabled': 'true',
+						'data-tone': 'blue'
+					},
+					textContent: 'inside bold'
+				}
+			]);
+			expect(lightCaptures).toEqual(actualCaptures);
+			expect(hydrateCaptures).toEqual(actualCaptures);
+			for (const host of [editorHost, lightHost, hydrateHost]) {
+				const content = host.querySelector<HTMLElement>('[data-parity-code-content]');
+				expect(content?.textContent).toBe('inside bold');
+				expect(content?.querySelector('strong')?.textContent).toBe('bold');
+				expect(content?.querySelector('code')).toBeNull();
+				expect(host.textContent).not.toContain('outside');
+			}
+			expect(lightRenderer.diagnostics).toEqual([]);
+			expect(hydrator.diagnostics).toEqual([]);
+		} finally {
+			lightSession.destroy();
+			hydrateSession.destroy();
+			editor.destroy();
 		}
 	});
 });

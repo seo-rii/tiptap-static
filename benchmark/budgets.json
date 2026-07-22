@@ -2,14 +2,20 @@
 	"render": {
 		"outerCards": 4,
 		"warmupIterations": 12,
-		"samples": 25,
+		"samples": 30,
 		"batchSize": 6,
-		"minTiptapToStaticMedianRatio": 1.2
+		"minTiptapToStaticMedianRatio": 1.2,
+		"minTiptapToHydrateMedianRatio": 1.2,
+		"minLightToHydrateMedianRatio": 0.8
 	},
 	"bundleSize": {
 		"maxLightRawBytes": 16384,
 		"maxLightGzipBytes": 6144,
 		"maxLightToTiptapRawRatio": 0.1,
-		"maxLightToTiptapGzipRatio": 0.1
+		"maxLightToTiptapGzipRatio": 0.1,
+		"maxHydrateRawBytes": 10240,
+		"maxHydrateGzipBytes": 3584,
+		"maxHydrateToLightRawRatio": 0.75,
+		"maxHydrateToLightGzipRatio": 0.7
 	}
 }

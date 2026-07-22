@@ -20,6 +20,11 @@
 			"import": "./dist/light.js",
 			"default": "./dist/light.js"
 		},
+		"./hydrate": {
+			"types": "./dist/hydrate.d.ts",
+			"import": "./dist/hydrate.js",
+			"default": "./dist/hydrate.js"
+		},
 		"./protocol": {
 			"types": "./dist/protocol.d.ts",
 			"import": "./dist/protocol.js",

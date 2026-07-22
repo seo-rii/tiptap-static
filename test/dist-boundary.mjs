@@ -46,17 +46,32 @@ test('light entry transitively excludes sanitizer, Tiptap, and ProseMirror', asy
 	await import(pathToFileURL(resolve(distRoot, 'light.js')).href);
 });
 
+test('hydrate entry is standalone and imports without DOM globals', async () => {
+	const graph = await collectGraph('hydrate.js');
+	const source = [...graph.values()].join('\n');
+	assert.equal(graph.size, 1);
+	assert.doesNotMatch(
+		source,
+		/sanitize-html|@tiptap\/|(?:^|['"])prosemirror-|\.\/engine\.js|\.\/extensions\.js/m
+	);
+	const hydrate = await import(pathToFileURL(resolve(distRoot, 'hydrate.js')).href);
+	assert.equal(typeof hydrate.createHydrator, 'function');
+	assert.equal(typeof hydrate.defineStaticNode, 'function');
+});
+
 test('root and protocol entries expose identical protocol bindings', async () => {
 	const [root, protocol] = await Promise.all([
 		import(pathToFileURL(resolve(distRoot, 'index.js')).href),
 		import(pathToFileURL(resolve(distRoot, 'protocol.js')).href)
 	]);
 	assert.equal(root.STATIC_NODE_VIEW, protocol.STATIC_NODE_VIEW);
+	assert.equal(root.createStaticNodeViewHook, protocol.createStaticNodeViewHook);
+	assert.equal(root.createStaticNodeViewRuntimeHook, protocol.createStaticNodeViewRuntimeHook);
 	assert.equal(root.setStaticNodeViewHook, protocol.setStaticNodeViewHook);
 	assert.equal(root.setStaticNodeViewRuntime, protocol.setStaticNodeViewRuntime);
 });
 
-test('package exports point at emitted light and protocol declarations', async () => {
+test('package exports point at emitted light, hydrate, and protocol declarations', async () => {
 	const packageJSON = JSON.parse(await readFile(resolve(packageRoot, 'package.json'), 'utf8'));
 	assert.deepEqual(packageJSON.exports['./light'], {
 		types: './dist/light.d.ts',
@@ -67,5 +82,10 @@ test('package exports point at emitted light and protocol declarations', async (
 		types: './dist/protocol.d.ts',
 		import: './dist/protocol.js',
 		default: './dist/protocol.js'
+	});
+	assert.deepEqual(packageJSON.exports['./hydrate'], {
+		types: './dist/hydrate.d.ts',
+		import: './dist/hydrate.js',
+		default: './dist/hydrate.js'
 	});
 });

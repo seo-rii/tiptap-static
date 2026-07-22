@@ -1,5 +1,8 @@
 export { createLightRenderer } from './light.js';
+export { createHydrator, defineStaticNode } from './hydrate.js';
 export {
+	createStaticNodeViewHook,
+	createStaticNodeViewRuntimeHook,
 	getStaticNodeViewHook,
 	hasStaticNodeViewHook,
 	setStaticNodeViewHook,
@@ -14,12 +17,18 @@ export type {
 	AnyRecord,
 	AttributeValidator,
 	DirectStaticNodeViewHook,
+	HydratorOptions,
 	LightRenderer,
 	LightRendererOptions,
 	RuntimeStaticNodeViewHook,
 	StaticDiagnostic,
 	StaticDiagnosticCode,
+	StaticHydrationMatch,
+	StaticHydrationNodeType,
+	StaticHydrationRule,
+	StaticHydrator,
 	StaticNode,
+	StaticNodePlan,
 	StaticNodeType,
 	StaticNodeViewHook,
 	StaticNodeViewMount,

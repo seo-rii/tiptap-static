@@ -13,12 +13,60 @@ There are no `/svelte`, `/react`, or `/vue` entry points. Framework integration 
 | Import | Purpose | Loaded module graph |
 | --- | --- | --- |
 | `tiptap-static/protocol` | Attach or inspect static NodeView hooks | None |
+| `tiptap-static/hydrate` | Hydrate prepared static-node plans | Standalone; no extension inspector |
 | `tiptap-static/light` | Enhance trusted HTML with static NodeViews | No sanitizer, Tiptap, or ProseMirror |
 | `tiptap-static` | Sanitize and enhance untrusted/stored HTML | Includes `sanitize-html` |
 
 These are import/bundle boundaries. Because npm installs dependencies per package, `sanitize-html` is still installed with `tiptap-static`, but it is not loaded into `/protocol` or `/light` consumers.
 
 The Svelte, React, and Vue adapters used by the integration suite are dev-only fixtures; the emitted runtime does not import them.
+
+## Prepared hydration
+
+Use the prepared entry for the smallest read-only browser chunk. Unlike `createLightRenderer`, it does not inspect Tiptap extension objects or provide a raw NodeView compatibility fallback. A dependency-free static declaration supplies the already parsed attributes, node shape, content location, and framework hook:
+
+```ts
+import { createHydrator, defineStaticNode } from 'tiptap-static/hydrate';
+import { createStaticNodeViewRuntimeHook } from 'tiptap-static/protocol';
+import CardComponent from './Card.svelte';
+import {
+  FRAMEWORK_STATIC_RUNTIME,
+  frameworkStaticRuntime
+} from './framework-static-runtime';
+
+export const CardStatic = defineStaticNode({
+  name: 'tiptap-card',
+  rules: [
+    {
+      selector: 'tiptap-card',
+      parse(element) {
+        const title = element.getAttribute('title') ?? '';
+        return {
+          attrs: { title },
+          HTMLAttributes: { title }
+        };
+      }
+    }
+  ],
+  type: { isLeaf: false, spec: { content: 'block*' } },
+  nodeView: createStaticNodeViewRuntimeHook(FRAMEWORK_STATIC_RUNTIME, {
+    component: CardComponent
+  })
+});
+
+const readOnly = createHydrator({
+  nodes: [CardStatic],
+  nodeViewRuntimes: [frameworkStaticRuntime]
+});
+
+const session = readOnly.mount(element, trustedSanitizedHTML);
+```
+
+`rules` are evaluated in node and rule order. A rule's `parse()` produces the exact `attrs` and rendered `HTMLAttributes` passed to the component; the prepared runtime deliberately does not repeat Tiptap defaulting, coercion, or `renderHTML` inference. `contentElement` can select a nested source such as `code` inside `pre`. `type.isLeaf` is explicit, while `isInline`, `isAtom`, and `spec` supply the remaining NodeView contract.
+
+The plan must live in a module that does not import `@tiptap/core`, ProseMirror, or an editor-only framework adapter. The editor module can dynamically import Tiptap and build its `Node.create()` extension from the same shared constants. Passing `extension` in a plan preserves object identity for migrations, but omitting it is what lets the read-only chunk stay dependency-free.
+
+Like `/light`, `/hydrate` trusts `mount()` and `session.update()` input. Sanitize stored or user-controlled HTML at a trusted server/editor boundary before loading the browser hydrator.
 
 ## Usage
 
@@ -72,9 +120,9 @@ const session = readOnly.mount(element, trustedSanitizedHTML);
 session.update(nextTrustedSanitizedHTML);
 ```
 
-`createLightRenderer` never sanitizes `mount()` or `session.update()` input. Do not pass user-controlled or merely stored HTML to it unless the content was sanitized elsewhere. It disables raw NodeView fallback by default; set `rawNodeViews: true` only for a deliberate compatibility migration.
+`createLightRenderer` never sanitizes `mount()` or `session.update()` input. Do not pass user-controlled or merely stored HTML to it unless the content was sanitized elsewhere. It disables raw NodeView fallback by default; set `rawNodeViews: true` only for a deliberate compatibility migration. Prefer `/hydrate` once an adapter and application expose dependency-free static plans.
 
-Both renderers use the same enhancement engine. A new full or light session takes ownership of its target from the previous session, and `destroy()` restores the original enhanced nodes rather than recreating them with `innerHTML`.
+The full and light renderers use the compatibility enhancement engine; `/hydrate` uses its smaller prepared-plan engine. All three share target ownership, so a new session takes ownership from the previous session and `destroy()` restores the original enhanced nodes rather than recreating them with `innerHTML`.
 
 ## Existing NodeViews
 
@@ -185,7 +233,8 @@ The test suite covers:
 - the real `svelte-tiptap@2.2.0` renderer compatibility fallback
 - the same extension objects rendered through real Tiptap `Editor`/`EditorContent` and `/light`, comparing Svelte, React, and Vue component output without invoking the raw editor renderer in light mode
 - the upstream svelte-tiptap leaf/atom and editable-content shapes, plus empty containers, siblings, ordinary framework child components, and recursively nested NodeViews
-- real `svelte-tiptap`, `@tiptap/react`, and `@tiptap/vue-3` Wrapper/Content components through `/light`, including reactive updates and framework unmount lifecycle
+- real `svelte-tiptap`, `@tiptap/react`, and `@tiptap/vue-3` Wrapper/Content components through `/light` and `/hydrate`, including reactive updates, nested content, context, framework unmount, and source-DOM restoration
+- three-way real Editor, `/light`, and `/hydrate` parity for deep nested NodeViews, leaf/atom nodes, mapped attributes, and explicit content holes
 - direct-hook and descriptor-runtime precedence, hook-only mode, and lifecycle cleanup
 - sanitizer-free light input, full-renderer sanitization, and atomic failed updates
 - original DOM node/listener restoration after enhancement
@@ -202,14 +251,15 @@ pnpm benchmark
 
 The command builds the package, writes reports under the ignored `benchmark-results/` directory, and fails when a budget in `benchmark/budgets.json` is exceeded. `pnpm benchmark:render` and `pnpm benchmark:size` run the individual comparisons.
 
-The render benchmark gives the real Tiptap `Editor` and `createLightRenderer()` the same extension objects and the same nested HTML. It validates the mounted NodeView count first, warms both paths, alternates their execution order, and records 25 samples of six synchronous mounts. Component creation, DOM validation, and teardown happen identically around both paths; only synchronous mount is timed. The CI gate uses the paired median Tiptap/light ratio rather than an absolute millisecond limit, because shared-runner hardware changes absolute timings.
+The render benchmark gives the real Tiptap `Editor`, `createLightRenderer()`, and `createHydrator()` the same nested HTML and NodeView mount implementation. Tiptap and `/light` share extension objects, while `/hydrate` receives an equivalent prepared plan. Before timing, it validates the mounted NodeView count and compares the exact nested NodeView output. It then warms all paths, cycles through all six execution orders, and records 30 samples of six synchronous mounts. Component creation, DOM validation, and teardown happen identically around all paths; only synchronous mount is timed. CI gates use paired median ratios rather than absolute milliseconds because shared-runner hardware changes absolute timings.
 
-The bundle benchmark uses the same pinned esbuild configuration for both browser ESM entry points:
+The bundle benchmark uses the same pinned esbuild configuration for all three browser ESM entry points:
 
 - `tiptap-static/light` exporting `createLightRenderer`
+- `tiptap-static/hydrate` exporting `createHydrator`
 - `@tiptap/core` exporting `Editor`
 
-It minifies the complete dependency graphs without externals, repeats each build to prove byte-for-byte determinism, and compares raw and gzip sizes. Framework code and application extensions are excluded from both bundles, so the result isolates the runtime choice and gives Tiptap the conservative baseline.
+It minifies the complete dependency graphs without externals, repeats each build to prove byte-for-byte determinism, and compares raw and gzip sizes. The hydrate gate also rejects any accidental import of the compatibility engine, extension inspector, sanitizer, Tiptap, or ProseMirror. Framework code and application extensions are excluded from all bundles, so the result isolates the runtime choice and gives Tiptap the conservative baseline.
 
 GitHub Actions runs type checks, all tests, package validation, render performance, and bundle-size budgets on Node 22. Each comparison run is written to the Job Summary and retained as a `benchmark-results` artifact containing JSON and Markdown reports.
 

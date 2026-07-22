@@ -15,6 +15,7 @@ describe('published package boundary', () => {
 		expect(packageJSON.name).toBe('tiptap-static');
 		expect(packageJSON.exports).toHaveProperty('.');
 		expect(packageJSON.exports).toHaveProperty('./light');
+		expect(packageJSON.exports).toHaveProperty('./hydrate');
 		expect(packageJSON.exports).toHaveProperty('./protocol');
 		expect(readme).toContain("from 'tiptap-static'");
 		expect(readme).not.toMatch(/from '@[^']+\/tiptap-static'/);

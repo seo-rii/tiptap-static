@@ -1,5 +1,6 @@
 import type {
 	AnyRecord,
+	StaticNodeViewHook,
 	StaticNodeViewRuntime,
 	TiptapExtensionLike
 } from './protocol.js';
@@ -130,6 +131,46 @@ export interface LightRendererOptions {
 	onError?: (error: unknown, diagnostic: StaticDiagnostic) => void;
 }
 
+export interface StaticHydrationMatch {
+	attrs?: AnyRecord;
+	HTMLAttributes?: AnyRecord;
+}
+
+export interface StaticHydrationRule {
+	selector: string;
+	namespace?: string;
+	parse?: (
+		element: HTMLElement
+	) => StaticHydrationMatch | false | null | undefined;
+	contentElement?: string | ((element: HTMLElement) => HTMLElement | null);
+}
+
+export interface StaticHydrationNodeType {
+	isLeaf: boolean;
+	isInline?: boolean;
+	isAtom?: boolean;
+	spec?: AnyRecord;
+}
+
+export interface StaticNodePlan {
+	name: string;
+	rules: readonly StaticHydrationRule[];
+	type: StaticHydrationNodeType;
+	nodeView: StaticNodeViewHook;
+	/** Preserves identity when already available; omit it on dependency-free read-only paths. */
+	extension?: TiptapExtensionLike;
+	options?: AnyRecord;
+	storage?: AnyRecord;
+}
+
+export interface HydratorOptions {
+	nodes: readonly StaticNodePlan[];
+	nodeViewRuntimes?: readonly StaticNodeViewRuntime[];
+	editor?: AnyRecord | ((facade: AnyRecord) => AnyRecord);
+	onDiagnostic?: (diagnostic: StaticDiagnostic) => void;
+	onError?: (error: unknown, diagnostic: StaticDiagnostic) => void;
+}
+
 export interface StaticRendererOptions extends LightRendererOptions {
 	sanitize?: StaticSanitizeOptions;
 }
@@ -147,6 +188,8 @@ export interface LightRenderer {
 	/** Does not sanitize trustedHTML or later session updates. */
 	mount(target: HTMLElement, trustedHTML: string): StaticRenderSession;
 }
+
+export type StaticHydrator = LightRenderer;
 
 export interface StaticRenderer extends LightRenderer {
 	sanitize(html: string, options?: StaticSanitizeOptions): string;

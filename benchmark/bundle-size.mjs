@@ -43,7 +43,7 @@ async function bundleEntry(name, contents) {
 	if (!output) throw new Error(`esbuild did not emit JavaScript for ${name}.`);
 	return {
 		bytes: output.contents,
-		inputModules: Object.keys(result.metafile.inputs).length
+		inputs: Object.keys(result.metafile.inputs)
 	};
 }
 
@@ -54,7 +54,7 @@ function summarizeBundle(bundle) {
 			level: 9,
 			strategy: zlibConstants.Z_DEFAULT_STRATEGY
 		}).byteLength,
-		inputModules: bundle.inputModules
+		inputModules: bundle.inputs.length
 	};
 }
 
@@ -75,25 +75,40 @@ export async function runBundleSizeBenchmark() {
 	]);
 	const entries = {
 		light: "export { createLightRenderer } from './dist/light.js';",
+		hydrate: "export { createHydrator } from './dist/hydrate.js';",
 		tiptap: "export { Editor } from '@tiptap/core';"
 	};
-	const [light, repeatedLight, tiptap, repeatedTiptap] = await Promise.all([
+	const [light, repeatedLight, hydrate, repeatedHydrate, tiptap, repeatedTiptap] = await Promise.all([
 		bundleEntry('tiptap-static-light', entries.light),
 		bundleEntry('tiptap-static-light-repeat', entries.light),
+		bundleEntry('tiptap-static-hydrate', entries.hydrate),
+		bundleEntry('tiptap-static-hydrate-repeat', entries.hydrate),
 		bundleEntry('tiptap-editor', entries.tiptap),
 		bundleEntry('tiptap-editor-repeat', entries.tiptap)
 	]);
 	if (
 		Buffer.compare(light.bytes, repeatedLight.bytes) !== 0 ||
+		Buffer.compare(hydrate.bytes, repeatedHydrate.bytes) !== 0 ||
 		Buffer.compare(tiptap.bytes, repeatedTiptap.bytes) !== 0
 	) {
 		throw new Error('Repeated esbuild output was not byte-for-byte deterministic.');
 	}
+	const forbiddenHydrateInput = hydrate.inputs.find((input) =>
+		/dist\/(?:engine|extensions|sanitize)\.js|sanitize-html|@tiptap\/|(?:^|\/)prosemirror-/.test(input)
+	);
+	if (forbiddenHydrateInput) {
+		throw new Error(`The hydrate bundle loaded a forbidden input: ${forbiddenHydrateInput}`);
+	}
 
 	const lightSize = summarizeBundle(light);
+	const hydrateSize = summarizeBundle(hydrate);
 	const tiptapSize = summarizeBundle(tiptap);
 	const rawRatio = lightSize.rawBytes / tiptapSize.rawBytes;
 	const gzipRatio = lightSize.gzipBytes / tiptapSize.gzipBytes;
+	const hydrateToLightRawRatio = hydrateSize.rawBytes / lightSize.rawBytes;
+	const hydrateToLightGzipRatio = hydrateSize.gzipBytes / lightSize.gzipBytes;
+	const hydrateToTiptapRawRatio = hydrateSize.rawBytes / tiptapSize.rawBytes;
+	const hydrateToTiptapGzipRatio = hydrateSize.gzipBytes / tiptapSize.gzipBytes;
 	const configured = budgets.bundleSize;
 	const checks = [
 		makeCheck('bundle.light.raw.max', lightSize.rawBytes, configured.maxLightRawBytes),
@@ -107,6 +122,18 @@ export async function runBundleSizeBenchmark() {
 			'bundle.light-to-tiptap.gzip-ratio.max',
 			gzipRatio,
 			configured.maxLightToTiptapGzipRatio
+		),
+		makeCheck('bundle.hydrate.raw.max', hydrateSize.rawBytes, configured.maxHydrateRawBytes),
+		makeCheck('bundle.hydrate.gzip.max', hydrateSize.gzipBytes, configured.maxHydrateGzipBytes),
+		makeCheck(
+			'bundle.hydrate-to-light.raw-ratio.max',
+			hydrateToLightRawRatio,
+			configured.maxHydrateToLightRawRatio
+		),
+		makeCheck(
+			'bundle.hydrate-to-light.gzip-ratio.max',
+			hydrateToLightGzipRatio,
+			configured.maxHydrateToLightGzipRatio
 		)
 	];
 
@@ -140,6 +167,11 @@ export async function runBundleSizeBenchmark() {
 				export: 'createLightRenderer',
 				packageVersion: packageManifest.version
 			},
+			hydrate: {
+				specifier: './dist/hydrate.js',
+				export: 'createHydrator',
+				packageVersion: packageManifest.version
+			},
 			tiptap: {
 				specifier: '@tiptap/core',
 				export: 'Editor',
@@ -148,13 +180,20 @@ export async function runBundleSizeBenchmark() {
 		},
 		bundles: {
 			tiptapStaticLight: lightSize,
+			tiptapStaticHydrate: hydrateSize,
 			tiptapEditor: tiptapSize
 		},
 		comparison: {
 			rawRatio: round(rawRatio, 6),
 			gzipRatio: round(gzipRatio, 6),
 			rawSavingsPercent: round((1 - rawRatio) * 100, 2),
-			gzipSavingsPercent: round((1 - gzipRatio) * 100, 2)
+			gzipSavingsPercent: round((1 - gzipRatio) * 100, 2),
+			hydrateToLightRawRatio: round(hydrateToLightRawRatio, 6),
+			hydrateToLightGzipRatio: round(hydrateToLightGzipRatio, 6),
+			hydrateToTiptapRawRatio: round(hydrateToTiptapRawRatio, 6),
+			hydrateToTiptapGzipRatio: round(hydrateToTiptapGzipRatio, 6),
+			hydrateToLightRawSavingsPercent: round((1 - hydrateToLightRawRatio) * 100, 2),
+			hydrateToLightGzipSavingsPercent: round((1 - hydrateToLightGzipRatio) * 100, 2)
 		},
 		checks,
 		passed: checks.every((check) => check.passed)
@@ -166,14 +205,16 @@ export function renderBundleSizeMarkdown(result) {
 	return [
 		'## Browser bundle size',
 		'',
-		'Both public APIs are bundled independently with the same minified browser ESM esbuild configuration. No dependency is externalized.',
+		'All three public APIs are bundled independently with the same minified browser ESM esbuild configuration. No dependency is externalized.',
 		'',
 		'| Bundle | Minified | gzip | Input modules |',
 		'| --- | ---: | ---: | ---: |',
 		`| Tiptap Editor | ${formatBytes(result.bundles.tiptapEditor.rawBytes)} | ${formatBytes(result.bundles.tiptapEditor.gzipBytes)} | ${result.bundles.tiptapEditor.inputModules} |`,
 		`| tiptap-static/light | ${formatBytes(result.bundles.tiptapStaticLight.rawBytes)} | ${formatBytes(result.bundles.tiptapStaticLight.gzipBytes)} | ${result.bundles.tiptapStaticLight.inputModules} |`,
+		`| tiptap-static/hydrate | ${formatBytes(result.bundles.tiptapStaticHydrate.rawBytes)} | ${formatBytes(result.bundles.tiptapStaticHydrate.gzipBytes)} | ${result.bundles.tiptapStaticHydrate.inputModules} |`,
 		'',
-		`Light/Tiptap ratio: **${(result.comparison.rawRatio * 100).toFixed(2)}% minified**, **${(result.comparison.gzipRatio * 100).toFixed(2)}% gzip** — **${status}**`,
+		`Light/Tiptap ratio: **${(result.comparison.rawRatio * 100).toFixed(2)}% minified**, **${(result.comparison.gzipRatio * 100).toFixed(2)}% gzip**`,
+		`Hydrate/Light ratio: **${(result.comparison.hydrateToLightRawRatio * 100).toFixed(2)}% minified**, **${(result.comparison.hydrateToLightGzipRatio * 100).toFixed(2)}% gzip** — **${status}**`,
 		''
 	].join('\n');
 }

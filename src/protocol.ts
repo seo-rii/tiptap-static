@@ -85,13 +85,26 @@ export type StaticNodeViewRenderer = ((props: StaticNodeViewProps) => StaticNode
 	[STATIC_NODE_VIEW]?: StaticNodeViewHook;
 };
 
+export function createStaticNodeViewHook(
+	mount: StaticNodeViewMount
+): DirectStaticNodeViewHook {
+	return { version: 1, mount };
+}
+
+export function createStaticNodeViewRuntimeHook<Value>(
+	runtime: StaticNodeViewRuntimeKey,
+	value: Value
+): RuntimeStaticNodeViewHook<Value> {
+	return { version: 1, runtime, value };
+}
+
 export function setStaticNodeViewHook<T extends (...args: any[]) => unknown>(
 	renderer: T,
 	mount: StaticNodeViewMount
 ): T & { [STATIC_NODE_VIEW]: DirectStaticNodeViewHook } {
 	Object.defineProperty(renderer, STATIC_NODE_VIEW, {
 		configurable: true,
-		value: { version: 1, mount } satisfies DirectStaticNodeViewHook
+		value: createStaticNodeViewHook(mount)
 	});
 	return renderer as T & { [STATIC_NODE_VIEW]: DirectStaticNodeViewHook };
 }
@@ -103,7 +116,7 @@ export function setStaticNodeViewRuntime<T extends (...args: any[]) => unknown, 
 ): T & { [STATIC_NODE_VIEW]: RuntimeStaticNodeViewHook<Value> } {
 	Object.defineProperty(renderer, STATIC_NODE_VIEW, {
 		configurable: true,
-		value: { version: 1, runtime, value } satisfies RuntimeStaticNodeViewHook<Value>
+		value: createStaticNodeViewRuntimeHook(runtime, value)
 	});
 	return renderer as T & { [STATIC_NODE_VIEW]: RuntimeStaticNodeViewHook<Value> };
 }
