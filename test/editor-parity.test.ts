@@ -802,7 +802,7 @@ describe('actual Tiptap Editor parity', () => {
 				createElement(ReactNodeViewContent, {
 					as: 'article',
 					'data-parity-content': ''
-				})
+				} as never)
 			);
 		const rendererOptions = {
 			as: 'article',

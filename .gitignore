@@ -2,3 +2,13 @@ dist/
 node_modules/
 *.tgz
 benchmark-results/
+coverage/
+*.log
+.env
+.env.*
+!.env.example
+.npmrc
+.DS_Store
+.idea/
+.vscode/
+RISK_REGISTER.md

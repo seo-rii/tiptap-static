@@ -41,7 +41,8 @@ export function sanitizeWithInspection(
 	const inferredAttributes = new Map<string, AllowedAttribute[]>();
 	const defaultsByType = new Map<string, AnyRecord>();
 
-	for (const node of inspection.nodes) {
+	const inspectedTypes = [...inspection.nodes, ...inspection.marks];
+	for (const node of inspectedTypes) {
 		const defaults: AnyRecord = {};
 		for (const item of node.attributes) {
 			if (item.hasDefault) defaults[item.name] = item.attribute.default;
@@ -49,7 +50,7 @@ export function sanitizeWithInspection(
 		defaultsByType.set(node.extension.name, defaults);
 	}
 
-	for (const node of inspection.nodes) {
+	for (const node of inspectedTypes) {
 		const tagNames = new Set(node.rules.map((rule) => rule.tagName).filter(Boolean) as string[]);
 		for (const rule of node.rules) {
 			if (!rule.tagName) {
@@ -225,6 +226,7 @@ export function sanitizeWithInspection(
 			'poster',
 			'action',
 			'formaction',
+			'data',
 			'xlink:href',
 			...(options.allowedSchemesAppliedToAttributes ?? [])
 		])

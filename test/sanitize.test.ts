@@ -1,3 +1,4 @@
+import { Mark } from '@tiptap/core';
 import { describe, expect, it } from 'vitest';
 
 import { sanitizeTiptapHTML } from '../src/sanitize.js';
@@ -11,6 +12,34 @@ function structuralNode(
 }
 
 describe('extension-driven sanitization', () => {
+	it('infers tags and attributes from a real Tiptap Mark extension', () => {
+		const StaticMark = Mark.create({
+			name: 'staticMark',
+			addAttributes() {
+				return {
+					tone: {
+						default: 'neutral',
+						parseHTML: (element) => element.getAttribute('data-tone'),
+						renderHTML: ({ tone }) => ({ 'data-tone': tone })
+					}
+				};
+			},
+			parseHTML() {
+				return [{ tag: 'static-mark' }];
+			},
+			renderHTML({ HTMLAttributes }) {
+				return ['static-mark', HTMLAttributes, 0];
+			}
+		});
+
+		const clean = sanitizeTiptapHTML(
+			'<static-mark data-tone="accent" onclick="steal()">safe</static-mark>',
+			[StaticMark]
+		);
+
+		expect(clean).toBe('<static-mark data-tone="accent">safe</static-mark>');
+	});
+
 	it('infers custom tags and rendered attributes but always removes event handlers', () => {
 		const card = structuralNode('card', {
 			parseHTML: () => [{ tag: 'tiptap-card' }],
@@ -107,14 +136,29 @@ describe('extension-driven sanitization', () => {
 		).toBe('<embed type="application/pdf" />');
 	});
 
+	it('applies URL scheme checks to explicitly allowed object data', () => {
+		const object = structuralNode('object', {
+			parseHTML: () => [{ tag: 'object' }],
+			addAttributes: () => ({ data: { default: '' } })
+		});
+
+		const clean = sanitizeTiptapHTML(
+			'<object data="javascript:alert(1)"></object><object data="https://example.com/file.pdf"></object>',
+			[object],
+			{ allowActiveContentTags: ['object'] }
+		);
+
+		expect(clean).toBe('<object></object><object data="https://example.com/file.pdf"></object>');
+	});
+
 	it('applies exact iframe hostname rules and rejects relative iframe URLs by default', () => {
 		const clean = sanitizeTiptapHTML(
-			'<iframe src="https://jungol.co.kr/embed/1"></iframe><iframe src="https://jungol.co.kr.evil.test/embed/1"></iframe><iframe src="/relative"></iframe>',
+			'<iframe src="https://media.example.com/embed/1"></iframe><iframe src="https://media.example.com.evil.test/embed/1"></iframe><iframe src="/relative"></iframe>',
 			[],
 			{
 				allowedTags: ['iframe'],
 				allowedAttributes: { iframe: ['src'] },
-				allowedIframeHostnames: ['jungol.co.kr'],
+				allowedIframeHostnames: ['media.example.com'],
 				allowIframeRelativeUrls: false
 			}
 		);
@@ -122,7 +166,7 @@ describe('extension-driven sanitization', () => {
 		container.innerHTML = clean;
 
 		expect([...container.querySelectorAll('iframe')].map((iframe) => iframe.getAttribute('src'))).toEqual([
-			'https://jungol.co.kr/embed/1',
+			'https://media.example.com/embed/1',
 			null,
 			null
 		]);

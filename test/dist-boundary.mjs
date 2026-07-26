@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import test from 'node:test';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -59,6 +59,15 @@ test('hydrate entry is standalone and imports without DOM globals', async () => 
 	assert.equal(typeof hydrate.defineStaticNode, 'function');
 });
 
+test('sanitize entry excludes the NodeView engine and works without DOM globals', async () => {
+	const graph = await collectGraph('sanitize.js');
+	const source = [...graph.values()].join('\n');
+	assert.doesNotMatch(source, /@tiptap\/|(?:^|['"])prosemirror-/m);
+	assert.ok(![...graph.keys()].some((file) => file.endsWith('/engine.js')));
+	const sanitize = await import(pathToFileURL(resolve(distRoot, 'sanitize.js')).href);
+	assert.equal(sanitize.sanitizeTiptapHTML('<p onclick="x()">safe</p>', []), '<p>safe</p>');
+});
+
 test('root and protocol entries expose identical protocol bindings', async () => {
 	const [root, protocol] = await Promise.all([
 		import(pathToFileURL(resolve(distRoot, 'index.js')).href),
@@ -71,7 +80,7 @@ test('root and protocol entries expose identical protocol bindings', async () =>
 	assert.equal(root.setStaticNodeViewRuntime, protocol.setStaticNodeViewRuntime);
 });
 
-test('package exports point at emitted light, hydrate, and protocol declarations', async () => {
+test('package exports point at every emitted subpath declaration', async () => {
 	const packageJSON = JSON.parse(await readFile(resolve(packageRoot, 'package.json'), 'utf8'));
 	assert.deepEqual(packageJSON.exports['./light'], {
 		types: './dist/light.d.ts',
@@ -88,4 +97,20 @@ test('package exports point at emitted light, hydrate, and protocol declarations
 		import: './dist/hydrate.js',
 		default: './dist/hydrate.js'
 	});
+	assert.deepEqual(packageJSON.exports['./sanitize'], {
+		types: './dist/sanitize.d.ts',
+		import: './dist/sanitize.js',
+		default: './dist/sanitize.js'
+	});
+});
+
+test('published source maps embed every referenced source', async () => {
+	const mapFiles = (await readdir(distRoot)).filter((file) => file.endsWith('.map'));
+	assert.ok(mapFiles.length > 0);
+
+	for (const file of mapFiles) {
+		const map = JSON.parse(await readFile(resolve(distRoot, file), 'utf8'));
+		assert.equal(map.sourcesContent?.length, map.sources.length, `${file} sourcesContent`);
+		assert.ok(map.sourcesContent.every((source) => typeof source === 'string'), file);
+	}
 });

@@ -1,0 +1,53 @@
+name: Bug report
+description: Report reproducible incorrect behavior
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. For security issues, use the private reporting link instead of this form.
+  - type: input
+    id: version
+    attributes:
+      label: tiptap-static version
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: dropdown
+    id: entry
+    attributes:
+      label: Import path
+      options:
+        - tiptap-static
+        - tiptap-static/light
+        - tiptap-static/hydrate
+        - tiptap-static/protocol
+        - tiptap-static/sanitize
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Include the extensions, HTML, runtime, and smallest code needed to reproduce the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Node/browser, framework, Tiptap, and adapter versions
+    validations:
+      required: true

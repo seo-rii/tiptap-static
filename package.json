@@ -2,11 +2,22 @@
 	"name": "tiptap-static",
 	"version": "0.1.0",
 	"description": "Sanitize or lightly enhance Tiptap HTML with existing extensions, without creating an editor",
+	"keywords": [
+		"tiptap",
+		"prosemirror",
+		"static-renderer",
+		"hydration",
+		"sanitization",
+		"svelte",
+		"react",
+		"vue"
+	],
+	"author": "Seorii",
 	"license": "MIT",
 	"type": "module",
 	"sideEffects": false,
 	"engines": {
-		"node": ">=22.0.0"
+		"node": ">=22.12.0"
 	},
 	"packageManager": "pnpm@10.30.0",
 	"exports": {
@@ -29,6 +40,11 @@
 			"types": "./dist/protocol.d.ts",
 			"import": "./dist/protocol.js",
 			"default": "./dist/protocol.js"
+		},
+		"./sanitize": {
+			"types": "./dist/sanitize.d.ts",
+			"import": "./dist/sanitize.js",
+			"default": "./dist/sanitize.js"
 		}
 	},
 	"files": [
@@ -50,6 +66,7 @@
 		"test:dist": "node --test test/dist-boundary.mjs",
 		"test:watch": "vitest",
 		"pack:check": "pnpm build && pnpm test:dist && publint",
+		"prepublishOnly": "pnpm check && pnpm test",
 		"prepack": "pnpm pack:check"
 	},
 	"dependencies": {
@@ -57,11 +74,13 @@
 	},
 	"devDependencies": {
 		"@sveltejs/vite-plugin-svelte": "7.1.2",
-		"@tiptap/core": "2.27.2",
-		"@tiptap/extension-code-block": "2.27.2",
-		"@tiptap/pm": "2.27.2",
-		"@tiptap/react": "2.27.2",
-		"@tiptap/vue-3": "2.27.2",
+		"@tiptap/core": "3.28.0",
+		"@tiptap/extension-bubble-menu": "3.28.0",
+		"@tiptap/extension-code-block": "3.28.0",
+		"@tiptap/extension-floating-menu": "3.28.0",
+		"@tiptap/pm": "3.28.0",
+		"@tiptap/react": "3.28.0",
+		"@tiptap/vue-3": "3.28.0",
 		"@types/react": "19.2.17",
 		"@types/react-dom": "19.2.3",
 		"@types/sanitize-html": "^2.16.1",
@@ -71,7 +90,7 @@
 		"react": "19.2.7",
 		"react-dom": "19.2.7",
 		"svelte": "5.55.9",
-		"svelte-tiptap": "2.2.0",
+		"svelte-tiptap": "3.0.1",
 		"typescript": "^6.0.3",
 		"vitest": "^4.1.4",
 		"vue": "3.5.40"
@@ -82,5 +101,9 @@
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/seo-rii/tiptap-static.git"
+	},
+	"homepage": "https://github.com/seo-rii/tiptap-static#readme",
+	"bugs": {
+		"url": "https://github.com/seo-rii/tiptap-static/issues"
 	}
 }

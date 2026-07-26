@@ -290,7 +290,7 @@ describe('real framework component runtimes', () => {
 					},
 					`clicks:${clicks}`
 				),
-				createElement(ReactNodeViewContent, { 'data-static-content': '' })
+				createElement(ReactNodeViewContent, { 'data-static-content': '' } as never)
 			);
 		};
 		const descriptor = {

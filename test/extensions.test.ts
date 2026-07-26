@@ -1,11 +1,37 @@
-import { Node } from '@tiptap/core';
+import { Mark, Node } from '@tiptap/core';
 import { describe, expect, it } from 'vitest';
 
 import { inspectExtensions, resolveExtensionField } from '../src/extensions.js';
 import type { TiptapExtensionLike } from '../src/types.js';
 
 describe('extension inspection', () => {
-	it('accepts a configured Tiptap Node instance without rerunning addOptions', () => {
+	it('inspects real Tiptap marks separately from NodeView candidates', () => {
+		const StaticMark = Mark.create({
+			name: 'staticMark',
+			addAttributes() {
+				return { tone: { default: 'neutral' } };
+			},
+			parseHTML() {
+				return [{ tag: 'static-mark' }];
+			},
+			renderHTML({ HTMLAttributes }) {
+				return ['static-mark', HTMLAttributes, 0];
+			}
+		});
+
+		const inspection = inspectExtensions([StaticMark]);
+
+		expect(inspection.nodes).toEqual([]);
+		expect(inspection.marks).toHaveLength(1);
+		expect(inspection.marks[0]).toMatchObject({
+			extension: StaticMark,
+			attributes: [{ name: 'tone', attribute: { default: 'neutral' } }],
+			rules: [{ selector: 'static-mark', tagName: 'static-mark' }]
+		});
+		expect(inspection.rules).toEqual([]);
+	});
+
+	it('evaluates configured Tiptap 3 options once per inspection', () => {
 		let optionCalls = 0;
 		const Base = Node.create({
 			name: 'configured-card',
@@ -34,7 +60,7 @@ describe('extension inspection', () => {
 
 		const inspection = inspectExtensions([Configured]);
 
-		expect(optionCalls).toBe(beforeInspection);
+		expect(optionCalls).toBe(beforeInspection + 1);
 		expect(inspection.nodes[0].extension).toBe(Configured);
 		expect(inspection.nodes[0].attributes[0]).toMatchObject({
 			name: 'label',

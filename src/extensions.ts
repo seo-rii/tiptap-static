@@ -37,6 +37,7 @@ export interface InspectedNodeExtension {
 export interface ExtensionInspection {
 	extensions: TiptapExtensionLike[];
 	nodes: InspectedNodeExtension[];
+	marks: InspectedNodeExtension[];
 	attributes: InspectedAttribute[];
 	rules: InspectedParseRule[];
 	diagnostics: StaticDiagnostic[];
@@ -81,22 +82,36 @@ export function inspectExtensions(
 		onDiagnostic?.(diagnostic);
 	};
 	const flattened: TiptapExtensionLike[] = [];
+	const extensionContexts = new Map<TiptapExtensionLike, AnyRecord>();
 	const stack = [...input].reverse();
 
 	while (stack.length > 0) {
 		const extension = stack.pop();
 		if (!extension) continue;
 		flattened.push(extension);
+		let context = extensionContexts.get(extension);
+		if (!context) {
+			const options = extension.options ?? {};
+			let storage: AnyRecord;
+			if (Object.hasOwn(extension, 'storage')) {
+				storage = extension.storage ?? {};
+			} else {
+				const addStorage = resolveExtensionField<(() => AnyRecord) | undefined>(
+					extension,
+					'addStorage',
+					{ name: extension.name, options }
+				);
+				storage = addStorage?.() ?? {};
+			}
+			context = { name: extension.name, options, storage };
+			extensionContexts.set(extension, context);
+		}
 
 		try {
 			const addExtensions = resolveExtensionField<(() => TiptapExtensionLike[]) | undefined>(
 				extension,
 				'addExtensions',
-				{
-					name: extension.name,
-					options: extension.options ?? {},
-					storage: extension.storage ?? {}
-				}
+				context
 			);
 			const children = addExtensions?.() ?? [];
 			for (let index = children.length - 1; index >= 0; index -= 1) stack.push(children[index]);
@@ -115,7 +130,13 @@ export function inspectExtensions(
 			extension,
 			index,
 			priority:
-				Number(resolveExtensionField<number | undefined>(extension, 'priority') ?? 100) || 100
+				Number(
+					resolveExtensionField<number | undefined>(
+						extension,
+						'priority',
+						extensionContexts.get(extension)
+					) ?? 100
+				) || 100
 		}))
 		.sort((left, right) => right.priority - left.priority || left.index - right.index)
 		.map(({ extension }) => extension);
@@ -135,18 +156,15 @@ export function inspectExtensions(
 	}
 
 	const nodesByName = new Map<string, InspectedNodeExtension>();
+	const marksByName = new Map<string, InspectedNodeExtension>();
 	const nodeAndMarkExtensions = extensions.filter(
 		(extension) => extension.type === 'node' || extension.type === 'mark'
 	);
 
 	for (const [extensionOrder, extension] of extensions.entries()) {
-		if (extension.type !== 'node') continue;
+		if (extension.type !== 'node' && extension.type !== 'mark') continue;
 
-		const context = {
-			name: extension.name,
-			options: extension.options ?? {},
-			storage: extension.storage ?? {}
-		};
+		const context = extensionContexts.get(extension) ?? {};
 		const rules: InspectedParseRule[] = [];
 
 		try {
@@ -228,14 +246,16 @@ export function inspectExtensions(
 			if (value !== undefined) typeSpec[field] = value;
 		}
 
-		nodesByName.set(extension.name, {
+		const inspected = {
 			extension,
 			attributes: [],
 			rules,
 			typeSpec,
 			renderHTML,
 			hasNodeView
-		});
+		};
+		if (extension.type === 'node') nodesByName.set(extension.name, inspected);
+		else marksByName.set(extension.name, inspected);
 	}
 
 	const attributes: InspectedAttribute[] = [];
@@ -245,9 +265,7 @@ export function inspectExtensions(
 				| (() => Array<{ types: string[]; attributes: Record<string, TiptapAttributeLike> }>)
 				| undefined
 			>(extension, 'addGlobalAttributes', {
-				name: extension.name,
-				options: extension.options ?? {},
-				storage: extension.storage ?? {},
+				...extensionContexts.get(extension),
 				extensions: nodeAndMarkExtensions
 			});
 
@@ -285,11 +303,7 @@ export function inspectExtensions(
 		try {
 			const addAttributes = resolveExtensionField<
 				(() => Record<string, TiptapAttributeLike>) | undefined
-			>(extension, 'addAttributes', {
-				name: extension.name,
-				options: extension.options ?? {},
-				storage: extension.storage ?? {}
-			});
+			>(extension, 'addAttributes', extensionContexts.get(extension));
 
 			for (const [name, originalAttribute] of Object.entries(addAttributes?.() ?? {})) {
 				const attribute: InspectedAttribute['attribute'] = {
@@ -319,8 +333,12 @@ export function inspectExtensions(
 	for (const node of nodesByName.values()) {
 		node.attributes = attributes.filter((attribute) => attribute.type === node.extension.name);
 	}
+	for (const mark of marksByName.values()) {
+		mark.attributes = attributes.filter((attribute) => attribute.type === mark.extension.name);
+	}
 
 	const nodes = [...nodesByName.values()];
+	const marks = [...marksByName.values()];
 	const rules = nodes
 		.flatMap((node) => node.rules)
 		.sort(
@@ -330,5 +348,5 @@ export function inspectExtensions(
 				left.ruleOrder - right.ruleOrder
 		);
 
-	return { extensions, nodes, attributes, rules, diagnostics };
+	return { extensions, nodes, marks, attributes, rules, diagnostics };
 }

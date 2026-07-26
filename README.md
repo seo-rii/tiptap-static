@@ -1,6 +1,11 @@
 # tiptap-static
 
+[![npm version](https://img.shields.io/npm/v/tiptap-static.svg)](https://www.npmjs.com/package/tiptap-static)
+[![MIT license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Render read-only Tiptap HTML without creating an `Editor` or a ProseMirror schema. The library accepts the existing extension objects produced by `Node.create()`, `.extend()`, and `.configure()` through structural inspection; it has no runtime dependency on `@tiptap/core` or `@tiptap/pm`.
+
+The package is pre-1.0. Its public API is tested and intended for production evaluation, but minor releases may still refine integration contracts.
 
 The full entry point performs three jobs:
 
@@ -15,11 +20,49 @@ There are no `/svelte`, `/react`, or `/vue` entry points. Framework integration 
 | `tiptap-static/protocol` | Attach or inspect static NodeView hooks | None |
 | `tiptap-static/hydrate` | Hydrate prepared static-node plans | Standalone; no extension inspector |
 | `tiptap-static/light` | Enhance trusted HTML with static NodeViews | No sanitizer, Tiptap, or ProseMirror |
+| `tiptap-static/sanitize` | Sanitize stored HTML from extension-derived rules | Includes `sanitize-html`; no NodeView engine |
 | `tiptap-static` | Sanitize and enhance untrusted/stored HTML | Includes `sanitize-html` |
 
 These are import/bundle boundaries. Because npm installs dependencies per package, `sanitize-html` is still installed with `tiptap-static`, but it is not loaded into `/protocol` or `/light` consumers.
 
 The Svelte, React, and Vue adapters used by the integration suite are dev-only fixtures; the emitted runtime does not import them.
+
+## Installation
+
+```sh
+pnpm add tiptap-static
+```
+
+```sh
+npm install tiptap-static
+```
+
+The package does not install Tiptap or a framework adapter. Keep the matching Tiptap and Svelte, React, or Vue adapter versions in the editor application.
+
+## Compatibility
+
+- ESM only
+- Node.js 22.12 or newer for server-side sanitization
+- Modern browsers with standard DOM APIs for `/light` and `/hydrate`
+- Tested against Tiptap 3.28, Svelte 5 with `svelte-tiptap` 3, React 19, and Vue 3
+
+Framework packages are development-only integration fixtures, not peer or runtime dependencies. Other Tiptap 3 and adapter versions may work when they preserve the documented NodeView contracts.
+
+`tiptap-static` is an independent project and is not affiliated with or endorsed by Tiptap.
+
+## Sanitization only
+
+Use the dedicated entry when a server or trusted application boundary only needs to sanitize stored HTML:
+
+```ts
+import { sanitizeTiptapHTML } from 'tiptap-static/sanitize';
+
+const safeHTML = sanitizeTiptapHTML(untrustedHTML, extensions, {
+  allowedIframeHostnames: ['media.example.com']
+});
+```
+
+This entry does not load the NodeView enhancement engine. Active content still requires explicit tag and attribute opt-in.
 
 ## Prepared hydration
 
@@ -126,7 +169,7 @@ The full and light renderers use the compatibility enhancement engine; `/hydrate
 
 ## Existing NodeViews
 
-The current `svelte-tiptap@2.2.0` `SvelteNodeViewRenderer` works through the full renderer's read-only compatibility facade. This path is covered by an integration test using its real `NodeViewWrapper` and `NodeViewContent` components.
+The current `svelte-tiptap@3.0.1` `SvelteNodeViewRenderer` works through the full renderer's read-only compatibility facade. This path is covered by an integration test using its real `NodeViewWrapper` and `NodeViewContent` components.
 
 Compatibility fallback supplies the subset commonly read by NodeViews:
 
@@ -226,11 +269,11 @@ The raw compatibility fallback proves that existing objects are usable. It canno
 
 The test suite covers:
 
-- real Tiptap 2.27.2 `Node.create().extend().configure()` objects
+- real Tiptap 3.28.0 `Node.create().extend().configure()` and `Mark.create()` objects
 - inherited fields, defaults, global attributes, rule priorities, and duplicate detection
 - nested NodeViews and child-first destruction
 - CodeBlock's `pre > code > 0` serialization hole
-- the real `svelte-tiptap@2.2.0` renderer compatibility fallback
+- the real `svelte-tiptap@3.0.1` renderer compatibility fallback
 - the same extension objects rendered through real Tiptap `Editor`/`EditorContent` and `/light`, comparing Svelte, React, and Vue component output without invoking the raw editor renderer in light mode
 - the upstream svelte-tiptap leaf/atom and editable-content shapes, plus empty containers, siblings, ordinary framework child components, and recursively nested NodeViews
 - real `svelte-tiptap`, `@tiptap/react`, and `@tiptap/vue-3` Wrapper/Content components through `/light` and `/hydrate`, including reactive updates, nested content, context, framework unmount, and source-DOM restoration
@@ -261,6 +304,18 @@ The bundle benchmark uses the same pinned esbuild configuration for all three br
 
 It minifies the complete dependency graphs without externals, repeats each build to prove byte-for-byte determinism, and compares raw and gzip sizes. The hydrate gate also rejects any accidental import of the compatibility engine, extension inspector, sanitizer, Tiptap, or ProseMirror. Framework code and application extensions are excluded from all bundles, so the result isolates the runtime choice and gives Tiptap the conservative baseline.
 
-GitHub Actions runs type checks, all tests, package validation, render performance, and bundle-size budgets on Node 22. Each comparison run is written to the Job Summary and retained as a `benchmark-results` artifact containing JSON and Markdown reports.
+GitHub Actions runs type checks, all tests, package validation, render performance, and bundle-size budgets on Node 22.12. Each comparison run is written to the Job Summary and retained as a `benchmark-results` artifact containing JSON and Markdown reports.
 
 Run `pnpm test`, `pnpm check`, `pnpm pack:check`, and `pnpm benchmark` before publishing.
+
+## Contributing
+
+Bug reports and focused pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow and project expectations.
+
+## Security
+
+Do not report vulnerabilities in a public issue. Follow [SECURITY.md](SECURITY.md) to send a private report.
+
+## License
+
+Released under the [MIT License](LICENSE).
