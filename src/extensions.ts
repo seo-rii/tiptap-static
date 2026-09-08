@@ -259,10 +259,19 @@ export function inspectExtensions(
 	}
 
 	const attributes: InspectedAttribute[] = [];
+	const nodeAttributeTypes = nodeAndMarkExtensions
+		.filter((extension) => extension.type === 'node' && extension.name !== 'text')
+		.map((extension) => extension.name);
+	const markAttributeTypes = nodeAndMarkExtensions
+		.filter((extension) => extension.type === 'mark')
+		.map((extension) => extension.name);
 	for (const extension of extensions) {
 		try {
 			const addGlobalAttributes = resolveExtensionField<
-				| (() => Array<{ types: string[]; attributes: Record<string, TiptapAttributeLike> }>)
+				| (() => Array<{
+						types: string[] | '*' | 'nodes' | 'marks';
+						attributes: Record<string, TiptapAttributeLike>;
+					}>)
 				| undefined
 			>(extension, 'addGlobalAttributes', {
 				...extensionContexts.get(extension),
@@ -270,7 +279,14 @@ export function inspectExtensions(
 			});
 
 			for (const group of addGlobalAttributes?.() ?? []) {
-				for (const type of group.types) {
+				// Match Tiptap's shorthand ordering and exclusion of text attributes.
+				let types: string[];
+				if (Array.isArray(group.types)) types = group.types;
+				else if (group.types === '*') types = [...nodeAttributeTypes, ...markAttributeTypes];
+				else if (group.types === 'nodes') types = nodeAttributeTypes;
+				else if (group.types === 'marks') types = markAttributeTypes;
+				else types = [];
+				for (const type of types) {
 					for (const [name, attribute] of Object.entries(group.attributes)) {
 						attributes.push({
 							type,
