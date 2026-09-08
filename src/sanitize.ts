@@ -167,34 +167,34 @@ export function sanitizeWithInspection(
 		}
 	}
 
-	const transformKeys = new Set([
-		'*',
-		...Object.keys(requestedTransforms),
-		...(allowedTags === false ? [] : allowedTags)
-	]);
+	// sanitize-html runs a tag-specific transform and then the wildcard transform.
+	// Only the wildcard wrapper applies validators, after all requested transforms.
+	const transformKeys = new Set(['*', ...Object.keys(requestedTransforms)]);
 	const transformTags: NonNullable<Parameters<typeof sanitizeHtml>[1]>['transformTags'] = {};
 	for (const transformKey of transformKeys) {
+		const requestedTransform = requestedTransforms[transformKey];
+		const transform =
+			typeof requestedTransform === 'string'
+				? sanitizeHtml.simpleTransform(requestedTransform, {})
+				: requestedTransform;
 		transformTags[transformKey] = (originalTagName, originalAttributes) => {
 			if (HARD_DENIED_TAGS.has(originalTagName.toLowerCase())) {
 				return { tagName: originalTagName, attribs: {} };
 			}
 			let tagName = originalTagName;
 			let attributes = { ...originalAttributes };
-			const requestedTransform = requestedTransforms[transformKey] ?? requestedTransforms['*'];
-			if (typeof requestedTransform === 'string') {
-				tagName = requestedTransform;
-			} else if (requestedTransform) {
-				const transformed = requestedTransform(tagName, attributes);
-				tagName = transformed.tagName;
-				attributes = { ...transformed.attribs };
-			}
+			const transformed = transform?.(tagName, attributes) ?? { tagName, attribs: attributes };
+			tagName = transformed.tagName;
+			attributes = { ...transformed.attribs };
 
-			for (const name of Object.keys(attributes)) {
-				if (/^on/i.test(name) || name.toLowerCase() === 'srcdoc') delete attributes[name];
-			}
 			if (HARD_DENIED_TAGS.has(tagName.toLowerCase())) {
 				tagName = 'span';
 				attributes = {};
+			}
+			if (transformKey !== '*') return { ...transformed, tagName, attribs: attributes };
+
+			for (const name of Object.keys(attributes)) {
+				if (/^on/i.test(name) || name.toLowerCase() === 'srcdoc') delete attributes[name];
 			}
 
 			const validators = [attributeValidators['*'], attributeValidators[tagName.toLowerCase()]];
@@ -219,7 +219,7 @@ export function sanitizeWithInspection(
 				}
 			}
 
-			return { tagName, attribs: attributes };
+			return { ...transformed, tagName, attribs: attributes };
 		};
 	}
 
