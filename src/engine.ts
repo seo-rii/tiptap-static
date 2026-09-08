@@ -489,32 +489,45 @@ export function createEnhancementEngine(options: EnhancementEngineOptions): Enha
 					if (!contentResolved && !isLeaf && definition.renderHTML) {
 						try {
 							const spec = definition.renderHTML({ node, HTMLAttributes });
-							let holePath: string[] | undefined;
-							const visitSpec = (value: unknown, path: string[]): void => {
+							// Array specs describe ordered element children. Keep their positions so
+							// repeated tag names cannot redirect the hole into decorative siblings.
+							// Other serialization shapes should provide parseHTML.contentElement.
+							let holePath: Array<{ tag: string; index: number }> | undefined;
+							const visitSpec = (
+								value: unknown,
+								path: Array<{ tag: string; index: number }>,
+								elementIndex: number
+							): void => {
 								if (holePath || !Array.isArray(value) || typeof value[0] !== 'string') return;
 								const tag = value[0].trim().split(/\s+/).at(-1)?.toLowerCase();
 								if (!tag) return;
-								const nextPath = [...path, tag];
+								const nextPath = [...path, { tag, index: elementIndex }];
 								const childStart =
 									typeof value[1] === 'object' && value[1] !== null && !Array.isArray(value[1])
 										? 2
 										: 1;
+								let childElementIndex = 0;
 								for (let index = childStart; index < value.length; index += 1) {
 									if (value[index] === 0) {
 										holePath = nextPath;
 										return;
 									}
-									visitSpec(value[index], nextPath);
+									const child = value[index];
+									visitSpec(child, nextPath, childElementIndex);
+									if (Array.isArray(child) || child?.nodeType === 1 || child?.dom?.nodeType === 1) {
+										childElementIndex += 1;
+									}
 								}
 							};
-							visitSpec(spec, []);
+							visitSpec(spec, [], 0);
 
-							if (holePath?.[0] === element.localName) {
+							if (holePath?.[0]?.tag === element.localName) {
 								let selected: HTMLElement | undefined = element;
-								for (const tagName of holePath.slice(1)) {
-									selected = [...(selected?.children ?? [])].find(
-										(candidate) => candidate.localName === tagName
-									) as HTMLElement | undefined;
+								for (const { tag, index } of holePath.slice(1)) {
+									const candidate: Element | undefined = selected?.children[index];
+									selected = candidate?.localName === tag
+										? candidate as HTMLElement
+										: undefined;
 									if (!selected) break;
 								}
 								if (selected) {
