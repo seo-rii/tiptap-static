@@ -373,38 +373,51 @@ export function createEnhancementEngine(options: EnhancementEngineOptions): Enha
 					}
 
 					const HTMLAttributes: AnyRecord = {};
-					for (const item of definition.attributes) {
-						if (item.attribute.rendered === false) continue;
-						const rendered = item.attribute.renderHTML
-							? item.attribute.renderHTML(attributes) ?? {}
-							: { [item.name]: attributes[item.name] };
-						for (const [key, value] of Object.entries(rendered)) {
-							if (!HTMLAttributes[key]) {
-								HTMLAttributes[key] = value;
-							} else if (key === 'class') {
-								const existing = String(HTMLAttributes[key]).split(' ');
-								const additions = String(value ?? '')
-									.split(' ')
-									.filter((className) => !existing.includes(className));
-								HTMLAttributes[key] = [...existing, ...additions].join(' ');
-							} else if (key === 'style') {
-								const styleMap = new Map<string, string>();
-								for (const declaration of `${HTMLAttributes[key]};${value ?? ''}`
-									.split(';')
-									.map((style) => style.trim())
-									.filter(Boolean)) {
-									const [property, propertyValue] = declaration
-										.split(':')
-										.map((part) => part.trim());
-									styleMap.set(property, propertyValue);
+					try {
+						for (const item of definition.attributes) {
+							if (item.attribute.rendered === false) continue;
+							const rendered = item.attribute.renderHTML
+								? item.attribute.renderHTML(attributes) ?? {}
+								: { [item.name]: attributes[item.name] };
+							for (const [key, value] of Object.entries(rendered)) {
+								if (!HTMLAttributes[key]) {
+									HTMLAttributes[key] = value;
+								} else if (key === 'class') {
+									const existing = String(HTMLAttributes[key]).split(' ');
+									const additions = String(value ?? '')
+										.split(' ')
+										.filter((className) => !existing.includes(className));
+									HTMLAttributes[key] = [...existing, ...additions].join(' ');
+								} else if (key === 'style') {
+									const styleMap = new Map<string, string>();
+									for (const declaration of `${HTMLAttributes[key]};${value ?? ''}`
+										.split(';')
+										.map((style) => style.trim())
+										.filter(Boolean)) {
+										const [property, propertyValue] = declaration
+											.split(':')
+											.map((part) => part.trim());
+										styleMap.set(property, propertyValue);
+									}
+									HTMLAttributes[key] = [...styleMap]
+										.map(([property, propertyValue]) => `${property}: ${propertyValue}`)
+										.join('; ');
+								} else {
+									HTMLAttributes[key] = value;
 								}
-								HTMLAttributes[key] = [...styleMap]
-									.map(([property, propertyValue]) => `${property}: ${propertyValue}`)
-									.join('; ');
-							} else {
-								HTMLAttributes[key] = value;
 							}
 						}
+					} catch (cause) {
+						const diagnostic: StaticDiagnostic = {
+							code: 'mount-failed',
+							message: `Could not render ${definition.extension.name}'s attributes; the source element was preserved.`,
+							extension: definition.extension.name,
+							cause
+						};
+						report(diagnostic);
+						notifyError(cause, diagnostic);
+						enhanceChildren(element);
+						continue;
 					}
 
 					let sourceContainer: HTMLElement = element;
