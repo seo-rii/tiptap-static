@@ -140,26 +140,29 @@ export function sanitizeWithInspection(
 		allowedAttributes = false;
 	} else {
 		allowedAttributes = {};
-		const sources = [sanitizeHtml.defaults.allowedAttributes, Object.fromEntries(inferredAttributes), options.allowedAttributes ?? {}];
+		const sources = [
+			sanitizeHtml.defaults.allowedAttributes,
+			Object.fromEntries(inferredAttributes),
+			options.allowedAttributes ?? {}
+		];
 		for (const source of sources) {
 			for (const [tagName, attributes] of Object.entries(source)) {
 				const normalizedTag = tagName.toLowerCase();
 				const output = allowedAttributes[normalizedTag] ?? [];
-				const known = new Set(
-					output.map((attribute) =>
-						typeof attribute === 'string' ? attribute.toLowerCase() : attribute.name.toLowerCase()
-					)
+				const byName = new Map(
+					output.map((attribute) => [
+						typeof attribute === 'string' ? attribute : attribute.name,
+						attribute
+					])
 				);
 				for (const attribute of attributes as AllowedAttribute[]) {
 					const name =
 						typeof attribute === 'string' ? attribute.toLowerCase() : attribute.name.toLowerCase();
 					if (/^on/i.test(name) || name === 'srcdoc') continue;
-					if (!known.has(name)) {
-						output.push(typeof attribute === 'string' ? name : { ...attribute, name });
-						known.add(name);
-					}
+					// Explicit value policies must replace inferred/default name-only permissions.
+					byName.set(name, typeof attribute === 'string' ? name : { ...attribute, name });
 				}
-				allowedAttributes[normalizedTag] = output;
+				allowedAttributes[normalizedTag] = [...byName.values()];
 			}
 		}
 	}
