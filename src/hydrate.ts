@@ -357,6 +357,7 @@ export function createHydrator(options: HydratorOptions): StaticHydrator {
 					let failureCode: StaticDiagnostic['code'] = 'mount-failed';
 					let resultDestroyed = false;
 					let mountedDOM: Node | undefined;
+					let sourceReplaced = false;
 					let movedNodes: Node[] = [];
 					const originalParent = element.parentNode;
 					const originalNextSibling = element.nextSibling;
@@ -410,7 +411,10 @@ export function createHydrator(options: HydratorOptions): StaticHydrator {
 						movedNodes = [...sourceContainer.childNodes];
 						const fragment = element.ownerDocument.createDocumentFragment();
 						for (const movedNode of movedNodes) fragment.append(movedNode);
-						if (dom !== element) element.replaceWith(dom);
+						if (dom !== element) {
+							element.replaceWith(dom);
+							sourceReplaced = true;
+						}
 						if (contentDOM) contentDOM.replaceChildren(fragment);
 						mountedRecords.push({
 							extension: prepared.plan.name,
@@ -434,8 +438,14 @@ export function createHydrator(options: HydratorOptions): StaticHydrator {
 							);
 							notifyError(destroyCause, diagnostic);
 						}
-						if (mountedDOM?.parentNode) {
-							mountedDOM.parentNode.replaceChild(element, mountedDOM);
+						// A returned DOM can have a parent before it replaces the source.
+						if (
+							sourceReplaced &&
+							mountedDOM &&
+							originalParent &&
+							mountedDOM.parentNode === originalParent
+						) {
+							originalParent.replaceChild(element, mountedDOM);
 						} else if (!element.parentNode && originalParent) {
 							originalParent.insertBefore(
 								element,
