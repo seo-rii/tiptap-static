@@ -260,7 +260,7 @@ export function createEnhancementEngine(options: EnhancementEngineOptions): Enha
 
 					for (const inspectedRule of inspection.rules) {
 						const definition = definitionByExtension.get(inspectedRule.extension);
-						if (!definition?.hasNodeView) continue;
+						if (!definition) continue;
 						if (
 							inspectedRule.rule.namespace &&
 							inspectedRule.rule.namespace !== element.namespaceURI
@@ -309,7 +309,7 @@ export function createEnhancementEngine(options: EnhancementEngineOptions): Enha
 						}
 					}
 
-					if (!match) {
+					if (!match || !match.definition.hasNodeView) {
 						enhanceChildren(element);
 						continue;
 					}
