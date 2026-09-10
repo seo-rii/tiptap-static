@@ -29,18 +29,19 @@ export function createStaticRenderer(options: StaticRendererOptions): StaticRend
 			allowedAttributes = {};
 			for (const source of [baseSanitize.allowedAttributes ?? {}, overrides.allowedAttributes ?? {}]) {
 				for (const [tagName, attributes] of Object.entries(source)) {
-					const current = allowedAttributes[tagName] ?? [];
-					const known = new Set(
-						current.map((attribute) =>
-							typeof attribute === 'string' ? attribute : attribute.name
-						)
+					const normalizedTag = tagName.toLowerCase();
+					const current = allowedAttributes[normalizedTag] ?? [];
+					const byName = new Map(
+						current.map((attribute) => [
+							typeof attribute === 'string' ? attribute : attribute.name,
+							attribute
+						])
 					);
 					for (const attribute of attributes) {
-						const name = typeof attribute === 'string' ? attribute : attribute.name;
-						if (!known.has(name)) current.push(attribute);
-						known.add(name);
+						const name = (typeof attribute === 'string' ? attribute : attribute.name).toLowerCase();
+						byName.set(name, typeof attribute === 'string' ? name : { ...attribute, name });
 					}
-					allowedAttributes[tagName] = current;
+					allowedAttributes[normalizedTag] = [...byName.values()];
 				}
 			}
 		}
