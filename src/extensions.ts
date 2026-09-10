@@ -300,7 +300,7 @@ export function inspectExtensions(
 								isRequired: false,
 								...attribute
 							},
-							hasDefault: Object.hasOwn(attribute, 'default') || !attribute.isRequired
+							hasDefault: !attribute.isRequired
 						});
 					}
 				}
@@ -332,8 +332,10 @@ export function inspectExtensions(
 					...originalAttribute
 				};
 				if (typeof attribute.default === 'function') attribute.default = attribute.default();
-				const hasDefault = !(attribute.isRequired && attribute.default === undefined);
-				if (!hasDefault) delete attribute.default;
+				// Tiptap's schema omits all defaults for required attributes, including
+				// explicit null/literal defaults retained by getAttributesFromExtensions.
+				const hasDefault = !attribute.isRequired;
+				if (attribute.isRequired && attribute.default === undefined) delete attribute.default;
 				attributes.push({ type: extension.name, name, attribute, hasDefault });
 			}
 		} catch (cause) {
