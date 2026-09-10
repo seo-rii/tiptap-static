@@ -389,19 +389,21 @@ export function createEnhancementEngine(options: EnhancementEngineOptions): Enha
 										.filter((className) => !existing.includes(className));
 									HTMLAttributes[key] = [...existing, ...additions].join(' ');
 								} else if (key === 'style') {
-									const styleMap = new Map<string, string>();
-									for (const declaration of `${HTMLAttributes[key]};${value ?? ''}`
-										.split(';')
-										.map((style) => style.trim())
-										.filter(Boolean)) {
-										const [property, propertyValue] = declaration
-											.split(':')
-											.map((part) => part.trim());
-										styleMap.set(property, propertyValue);
+									const mergedStyle = element.ownerDocument.createElement('div').style;
+									const addedStyle = element.ownerDocument.createElement('div').style;
+									mergedStyle.cssText = String(HTMLAttributes[key]);
+									addedStyle.cssText = String(value ?? '');
+									// Parse with the browser, then replace properties individually so
+									// later attribute renderers also replace earlier !important values.
+									for (let index = 0; index < addedStyle.length; index += 1) {
+										const property = addedStyle.item(index);
+										mergedStyle.setProperty(
+											property,
+											addedStyle.getPropertyValue(property),
+											addedStyle.getPropertyPriority(property)
+										);
 									}
-									HTMLAttributes[key] = [...styleMap]
-										.map(([property, propertyValue]) => `${property}: ${propertyValue}`)
-										.join('; ');
+									HTMLAttributes[key] = mergedStyle.cssText.replace(/;$/, '');
 								} else {
 									HTMLAttributes[key] = value;
 								}
