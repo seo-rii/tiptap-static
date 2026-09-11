@@ -1,6 +1,6 @@
 {
 	"name": "tiptap-static",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "Sanitize or lightly enhance Tiptap HTML with existing extensions, without creating an editor",
 	"keywords": [
 		"tiptap",
