@@ -73,7 +73,7 @@
 		"sanitize-html": "^2.17.1"
 	},
 	"devDependencies": {
-		"@sveltejs/vite-plugin-svelte": "7.1.2",
+		"@sveltejs/vite-plugin-svelte": "7.2.0",
 		"@tiptap/core": "3.28.0",
 		"@tiptap/extension-bubble-menu": "3.28.0",
 		"@tiptap/extension-code-block": "3.28.0",
